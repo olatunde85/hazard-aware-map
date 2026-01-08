@@ -63,3 +63,7 @@ mobile/src/services/MapsConfigService.ts
 
 # Local development notes
 *.local.md
+
+# Research documents
+RESEARCH_NOTES.md
+RESEARCH_PAPER.md

@@ -1,10 +1,25 @@
 import React, {useEffect, useState, useRef} from 'react';
-import {StyleSheet, View, Text, ActivityIndicator, TouchableOpacity} from 'react-native';
-import MapView, {Marker, Circle, PROVIDER_GOOGLE} from 'react-native-maps';
+import {
+  StyleSheet,
+  View,
+  Text,
+  ActivityIndicator,
+  TouchableOpacity,
+  TextInput,
+  Modal,
+  Alert,
+  Platform,
+  ScrollView,
+  KeyboardAvoidingView,
+  Linking,
+} from 'react-native';
+import MapView, {Marker, Circle, PROVIDER_GOOGLE, Polyline} from 'react-native-maps';
 import {useIsFocused} from '@react-navigation/native';
+import {GooglePlacesAutocomplete} from 'react-native-google-places-autocomplete';
 import {LocationService} from '@services/LocationService';
 import {ApiService} from '@services/ApiService';
 import {MapsConfigService} from '@services/MapsConfigService';
+import {TripService, type Location as TripLocation} from '@services/TripService';
 import type {Hazard} from '../types';
 
 export function MapScreen(): React.JSX.Element {
@@ -16,6 +31,19 @@ export function MapScreen(): React.JSX.Element {
   const mapRef = useRef<MapView>(null);
   const isFocused = useIsFocused();
   const tilesLoadTimeout = useRef<NodeJS.Timeout | null>(null);
+
+  // Trip mode state
+  const [showDestinationModal, setShowDestinationModal] = useState(false);
+  const [destinationQuery, setDestinationQuery] = useState('');
+  const [destination, setDestination] = useState<TripLocation | null>(null);
+  const [isTripActive, setIsTripActive] = useState(false);
+  const [tripStats, setTripStats] = useState({
+    distanceTraveled: 0,
+    hazardsAvoided: 0,
+  });
+  const [useCoordinates, setUseCoordinates] = useState(false);
+  const [googleMapsApiKey, setGoogleMapsApiKey] = useState<string | null>(null);
+  const tripService = TripService.getInstance();
 
   useEffect(() => {
     initializeMap();
@@ -41,8 +69,19 @@ export function MapScreen(): React.JSX.Element {
   useEffect(() => {
     if (isFocused) {
       checkApiKey();
+      loadGoogleMapsApiKey();
     }
   }, [isFocused]);
+
+  const loadGoogleMapsApiKey = async () => {
+    try {
+      const mapsConfigService = MapsConfigService.getInstance();
+      const apiKey = await mapsConfigService.getApiKey();
+      setGoogleMapsApiKey(apiKey);
+    } catch (error) {
+      console.error('Failed to load Google Maps API key:', error);
+    }
+  };
 
   const checkApiKey = async () => {
     try {
@@ -190,6 +229,184 @@ export function MapScreen(): React.JSX.Element {
     }
   };
 
+  // Trip mode functions
+  const handleSetDestination = (lat: number, lon: number, name?: string) => {
+    const dest = {latitude: lat, longitude: lon};
+    setDestination(dest);
+    setShowDestinationModal(false);
+    setDestinationQuery('');
+    setUseCoordinates(false);
+
+    // Center map to show both user and destination
+    if (userLocation && mapRef.current) {
+      mapRef.current.fitToCoordinates(
+        [userLocation, dest],
+        {
+          edgePadding: {top: 100, right: 50, bottom: 200, left: 50},
+          animated: true,
+        },
+      );
+    }
+
+    if (name) {
+      Alert.alert('Destination Set', `Destination: ${name}`);
+    }
+  };
+
+  const handlePlaceSelect = (data: any, details: any) => {
+    if (details?.geometry?.location) {
+      const {lat, lng} = details.geometry.location;
+      handleSetDestination(lat, lng, data.description);
+    }
+  };
+
+  const handleCoordinateSearch = () => {
+    // Simple coordinate parser (format: "lat, lon")
+    const coords = destinationQuery.split(',').map(s => parseFloat(s.trim()));
+    if (coords.length === 2 && !isNaN(coords[0]) && !isNaN(coords[1])) {
+      handleSetDestination(coords[0], coords[1]);
+    } else {
+      Alert.alert(
+        'Invalid Format',
+        'Please enter coordinates in format: latitude, longitude\nExample: 7.3775, 3.9470',
+      );
+    }
+  };
+
+  const openGoogleMaps = () => {
+    if (!destination) return;
+
+    const url = Platform.select({
+      ios: `comgooglemaps://?daddr=${destination.latitude},${destination.longitude}&directionsmode=driving`,
+      android: `google.navigation:q=${destination.latitude},${destination.longitude}&mode=d`,
+    });
+
+    const fallbackUrl = `https://www.google.com/maps/dir/?api=1&destination=${destination.latitude},${destination.longitude}&travelmode=driving`;
+
+    if (url) {
+      Linking.canOpenURL(url)
+        .then(supported => {
+          if (supported) {
+            return Linking.openURL(url);
+          } else {
+            // Fallback to browser if Google Maps app not installed
+            return Linking.openURL(fallbackUrl);
+          }
+        })
+        .catch(err => {
+          console.error('Error opening Google Maps:', err);
+          Linking.openURL(fallbackUrl);
+        });
+    }
+  };
+
+  const handleStartTrip = async () => {
+    if (!destination) {
+      Alert.alert('No Destination', 'Please set a destination first.');
+      return;
+    }
+
+    if (!userLocation) {
+      Alert.alert('Location Error', 'Unable to get your current location.');
+      return;
+    }
+
+    // Ask user if they want to open Google Maps
+    Alert.alert(
+      'Start Trip',
+      'Do you want to open Google Maps for navigation?',
+      [
+        {
+          text: 'No, Just Alert',
+          onPress: async () => {
+            await startTripMonitoring();
+          },
+        },
+        {
+          text: 'Yes, Open Maps',
+          onPress: async () => {
+            await startTripMonitoring();
+            // Small delay to let alert dismiss
+            setTimeout(() => {
+              openGoogleMaps();
+            }, 500);
+          },
+        },
+      ],
+    );
+  };
+
+  const startTripMonitoring = async () => {
+    try {
+      await tripService.startTrip(
+        destination!,
+        userLocation!,
+        (hazard, distance) => {
+          // Hazard alert callback
+          const emoji = tripService.getHazardEmoji(hazard.hazard_type);
+          const severityText = tripService.getSeverityText(hazard.severity);
+          const distanceText = tripService.formatDistance(distance);
+
+          Alert.alert(
+            `${emoji} Hazard Ahead!`,
+            `${severityText} ${hazard.hazard_type} in ${distanceText}\n\nSeverity: ${hazard.severity.toFixed(1)}/10\nConfidence: ${(hazard.confidence * 100).toFixed(0)}%`,
+            [{text: 'OK'}],
+          );
+        },
+      );
+
+      setIsTripActive(true);
+      Alert.alert('Trip Started', 'You will be alerted about hazards ahead.');
+
+      // Update stats periodically
+      const statsInterval = setInterval(() => {
+        const state = tripService.getTripState();
+        setTripStats({
+          distanceTraveled: state.distanceTraveled,
+          hazardsAvoided: state.hazardsAvoided,
+        });
+      }, 2000);
+
+      // Store interval for cleanup
+      (tripService as any).statsInterval = statsInterval;
+    } catch (error) {
+      console.error('Failed to start trip:', error);
+      Alert.alert('Error', 'Failed to start trip. Please try again.');
+    }
+  };
+
+  const handleStopTrip = () => {
+    Alert.alert(
+      'Stop Trip',
+      'Are you sure you want to stop this trip?',
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'Stop',
+          style: 'destructive',
+          onPress: () => {
+            const finalStats = tripService.stopTrip();
+
+            // Clear stats interval
+            if ((tripService as any).statsInterval) {
+              clearInterval((tripService as any).statsInterval);
+              (tripService as any).statsInterval = null;
+            }
+
+            setIsTripActive(false);
+            setDestination(null);
+            setTripStats({distanceTraveled: 0, hazardsAvoided: 0});
+
+            Alert.alert(
+              'Trip Completed',
+              `Distance: ${tripService.formatDistance(finalStats.distanceTraveled)}\nHazards Avoided: ${finalStats.hazardsAvoided}`,
+            );
+          },
+        },
+      ],
+    );
+  };
+
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
@@ -263,10 +480,39 @@ export function MapScreen(): React.JSX.Element {
             />
           </React.Fragment>
         ))}
+
+        {/* Destination Marker */}
+        {destination && (
+          <>
+            <Marker
+              coordinate={destination}
+              title="Destination"
+              description="Your trip destination"
+              pinColor="#4CAF50"
+            />
+            {userLocation && (
+              <Polyline
+                coordinates={[userLocation, destination]}
+                strokeColor="#4CAF50"
+                strokeWidth={2}
+                lineDashPattern={[5, 5]}
+              />
+            )}
+          </>
+        )}
       </MapView>
 
       <View style={styles.statsOverlay}>
-        <Text style={styles.statsText}>{hazards.length} hazards nearby</Text>
+        {isTripActive ? (
+          <>
+            <Text style={styles.statsText}>🚗 Trip Active</Text>
+            <Text style={styles.tripStatsText}>
+              Distance: {tripService.formatDistance(tripStats.distanceTraveled)} • Hazards Avoided: {tripStats.hazardsAvoided}
+            </Text>
+          </>
+        ) : (
+          <Text style={styles.statsText}>{hazards.length} hazards nearby</Text>
+        )}
         {!mapTilesLoaded && (
           <Text style={styles.loadingTilesText}>Loading map tiles...</Text>
         )}
@@ -294,6 +540,150 @@ export function MapScreen(): React.JSX.Element {
           <Text style={styles.legendText}>Low</Text>
         </View>
       </View>
+
+      {/* Trip Control Buttons */}
+      <View style={styles.tripControlsContainer}>
+        {!isTripActive ? (
+          <>
+            <TouchableOpacity
+              style={[styles.tripButton, styles.setDestinationButton]}
+              onPress={() => setShowDestinationModal(true)}>
+              <Text style={styles.tripButtonText}>
+                {destination ? '📍 Change Destination' : '📍 Set Destination'}
+              </Text>
+            </TouchableOpacity>
+            {destination && (
+              <TouchableOpacity
+                style={[styles.tripButton, styles.startTripButton]}
+                onPress={handleStartTrip}>
+                <Text style={styles.tripButtonText}>🚗 Start Trip</Text>
+              </TouchableOpacity>
+            )}
+          </>
+        ) : (
+          <TouchableOpacity
+            style={[styles.tripButton, styles.stopTripButton]}
+            onPress={handleStopTrip}>
+            <Text style={styles.tripButtonText}>⏹️ Stop Trip</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Destination Search Modal */}
+      <Modal
+        visible={showDestinationModal}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => {
+          setShowDestinationModal(false);
+          setUseCoordinates(false);
+          setDestinationQuery('');
+        }}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Set Destination</Text>
+            <TouchableOpacity
+              style={styles.modalCloseButton}
+              onPress={() => {
+                setShowDestinationModal(false);
+                setUseCoordinates(false);
+                setDestinationQuery('');
+              }}>
+              <Text style={styles.modalCloseButtonText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.modalToggleContainer}>
+            <TouchableOpacity
+              style={[
+                styles.modalToggleButton,
+                !useCoordinates && styles.modalToggleButtonActive,
+              ]}
+              onPress={() => setUseCoordinates(false)}>
+              <Text
+                style={[
+                  styles.modalToggleText,
+                  !useCoordinates && styles.modalToggleTextActive,
+                ]}>
+                🔍 Search Place
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.modalToggleButton,
+                useCoordinates && styles.modalToggleButtonActive,
+              ]}
+              onPress={() => setUseCoordinates(true)}>
+              <Text
+                style={[
+                  styles.modalToggleText,
+                  useCoordinates && styles.modalToggleTextActive,
+                ]}>
+                📍 Coordinates
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {!useCoordinates ? (
+            <View style={styles.autocompleteContainer}>
+              {googleMapsApiKey ? (
+                <GooglePlacesAutocomplete
+                  placeholder="Search for a place..."
+                  onPress={handlePlaceSelect}
+                  query={{
+                    key: googleMapsApiKey,
+                    language: 'en',
+                  }}
+                  fetchDetails={true}
+                  enablePoweredByContainer={false}
+                  styles={{
+                    textInputContainer: styles.autocompleteInputContainer,
+                    textInput: styles.autocompleteInput,
+                    listView: styles.autocompleteList,
+                    row: styles.autocompleteRow,
+                    description: styles.autocompleteDescription,
+                  }}
+                  nearbyPlacesAPI="GooglePlacesSearch"
+                  debounce={300}
+                />
+              ) : (
+                <View style={styles.noApiKeyContainer}>
+                  <Text style={styles.noApiKeyText}>
+                    Google Maps API key required for place search
+                  </Text>
+                  <Text style={styles.noApiKeyHint}>
+                    Configure in Settings or use Coordinates mode
+                  </Text>
+                </View>
+              )}
+            </View>
+          ) : (
+            <View style={styles.coordinateContainer}>
+              <Text style={styles.coordinateHint}>
+                Enter coordinates (latitude, longitude)
+              </Text>
+              <Text style={styles.coordinateExample}>
+                Example: 7.3775, 3.9470 (Lagos, Nigeria)
+              </Text>
+              <TextInput
+                style={styles.coordinateInput}
+                placeholder="Latitude, Longitude"
+                value={destinationQuery}
+                onChangeText={setDestinationQuery}
+                keyboardType="numbers-and-punctuation"
+                autoFocus
+              />
+              <TouchableOpacity
+                style={styles.coordinateButton}
+                onPress={handleCoordinateSearch}>
+                <Text style={styles.coordinateButtonText}>Set Destination</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -430,5 +820,184 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#333',
     fontWeight: '500',
+  },
+  tripStatsText: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  tripControlsContainer: {
+    position: 'absolute',
+    bottom: 80,
+    left: 20,
+    right: 90, // Leave space for center button (50px + 20px margin)
+    flexDirection: 'row',
+    gap: 10,
+  },
+  tripButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  setDestinationButton: {
+    backgroundColor: '#007AFF',
+  },
+  startTripButton: {
+    backgroundColor: '#4CAF50',
+  },
+  stopTripButton: {
+    backgroundColor: '#FF3B30',
+  },
+  tripButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  // Modal styles
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E5E5',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  modalCloseButton: {
+    position: 'absolute',
+    right: 16,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F5F5F5',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalCloseButtonText: {
+    fontSize: 20,
+    color: '#666',
+  },
+  modalToggleContainer: {
+    flexDirection: 'row',
+    margin: 16,
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+    padding: 4,
+  },
+  modalToggleButton: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderRadius: 6,
+  },
+  modalToggleButtonActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 1},
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  modalToggleText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#666',
+  },
+  modalToggleTextActive: {
+    color: '#007AFF',
+    fontWeight: '600',
+  },
+  // Autocomplete styles
+  autocompleteContainer: {
+    flex: 1,
+    padding: 16,
+  },
+  autocompleteInputContainer: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#DDD',
+    borderRadius: 8,
+  },
+  autocompleteInput: {
+    fontSize: 16,
+    color: '#333',
+  },
+  autocompleteList: {
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  autocompleteRow: {
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  autocompleteDescription: {
+    fontSize: 14,
+    color: '#333',
+  },
+  noApiKeyContainer: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  noApiKeyText: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  noApiKeyHint: {
+    fontSize: 14,
+    color: '#999',
+    textAlign: 'center',
+  },
+  // Coordinate input styles
+  coordinateContainer: {
+    flex: 1,
+    padding: 24,
+  },
+  coordinateHint: {
+    fontSize: 16,
+    color: '#666',
+    marginBottom: 8,
+  },
+  coordinateExample: {
+    fontSize: 14,
+    color: '#999',
+    marginBottom: 20,
+    fontStyle: 'italic',
+  },
+  coordinateInput: {
+    borderWidth: 1,
+    borderColor: '#DDD',
+    borderRadius: 8,
+    padding: 14,
+    fontSize: 16,
+    marginBottom: 20,
+  },
+  coordinateButton: {
+    backgroundColor: '#007AFF',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  coordinateButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
