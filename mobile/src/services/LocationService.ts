@@ -1,5 +1,5 @@
 import Geolocation from 'react-native-geolocation-service';
-import {LocationData} from '@types/index';
+import type {LocationData} from '../types';
 import {PermissionsAndroid, Platform} from 'react-native';
 
 export class LocationService {

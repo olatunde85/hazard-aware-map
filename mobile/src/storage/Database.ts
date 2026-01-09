@@ -1,5 +1,5 @@
 import SQLite, {SQLiteDatabase} from 'react-native-sqlite-storage';
-import {BumpDetection} from '@types/index';
+import type {BumpDetection} from '../types';
 
 SQLite.enablePromise(true);
 

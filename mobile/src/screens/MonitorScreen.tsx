@@ -14,7 +14,7 @@ import {LocationService} from '@services/LocationService';
 import {ApiService} from '@services/ApiService';
 import {AuthService} from '@services/AuthService';
 import {Database} from '@storage/Database';
-import {BumpDetection} from '@types/index';
+import type {BumpDetection} from '../types';
 
 interface MonitorScreenProps {
   onLogout?: () => void;

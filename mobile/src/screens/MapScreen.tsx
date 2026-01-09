@@ -343,13 +343,13 @@ export function MapScreen(): React.JSX.Element {
         userLocation!,
         (hazard, distance) => {
           // Hazard alert callback
-          const emoji = tripService.getHazardEmoji(hazard.hazard_type);
+          const emoji = tripService.getHazardEmoji(hazard.hazardType);
           const severityText = tripService.getSeverityText(hazard.severity);
           const distanceText = tripService.formatDistance(distance);
 
           Alert.alert(
             `${emoji} Hazard Ahead!`,
-            `${severityText} ${hazard.hazard_type} in ${distanceText}\n\nSeverity: ${hazard.severity.toFixed(1)}/10\nConfidence: ${(hazard.confidence * 100).toFixed(0)}%`,
+            `${severityText} ${hazard.hazardType} in ${distanceText}\n\nSeverity: ${hazard.severity.toFixed(1)}/10\nConfidence: ${(hazard.confidence * 100).toFixed(0)}%`,
             [{text: 'OK'}],
           );
         },
@@ -384,8 +384,8 @@ export function MapScreen(): React.JSX.Element {
         {
           text: 'Stop',
           style: 'destructive',
-          onPress: () => {
-            const finalStats = tripService.stopTrip();
+          onPress: async () => {
+            const finalStats = await tripService.stopTrip();
 
             // Clear stats interval
             if ((tripService as any).statsInterval) {

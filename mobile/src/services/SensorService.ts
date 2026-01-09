@@ -5,7 +5,7 @@ import {
   SensorTypes,
 } from 'react-native-sensors';
 import {Subscription} from 'rxjs';
-import {AccelerometerData, GyroscopeData} from '@types/index';
+import type {AccelerometerData, GyroscopeData} from '../types';
 
 export class SensorService {
   private static instance: SensorService;

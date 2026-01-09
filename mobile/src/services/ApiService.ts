@@ -1,6 +1,6 @@
 import axios, {AxiosInstance} from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {BumpDetection, Hazard} from '@types/index';
+import type {BumpDetection, Hazard} from '../types';
 
 const API_URL_KEY = '@bump_aware_api_url';
 const DEFAULT_API_URL = 'http://192.168.0.142:8080/api/v1';
@@ -92,7 +92,17 @@ export class ApiService {
       },
     });
 
-    return response.data.hazards;
+    // Transform snake_case API response to camelCase TypeScript types
+    return response.data.hazards.map((h: any) => ({
+      id: String(h.id),
+      latitude: h.latitude,
+      longitude: h.longitude,
+      severity: h.severity,
+      confidence: h.confidence,
+      detectionCount: h.detection_count,
+      lastReported: h.last_reported || h.updated_at || new Date().toISOString(),
+      hazardType: h.hazard_type || 'unknown',
+    }));
   }
 
   public async getHazardsInBounds(
@@ -110,7 +120,17 @@ export class ApiService {
       },
     });
 
-    return response.data.hazards;
+    // Transform snake_case API response to camelCase TypeScript types
+    return response.data.hazards.map((h: any) => ({
+      id: String(h.id),
+      latitude: h.latitude,
+      longitude: h.longitude,
+      severity: h.severity,
+      confidence: h.confidence,
+      detectionCount: h.detection_count,
+      lastReported: h.last_reported || h.updated_at || new Date().toISOString(),
+      hazardType: h.hazard_type || 'unknown',
+    }));
   }
 
   public async verifyHazard(hazardId: string, isValid: boolean): Promise<void> {
