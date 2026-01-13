@@ -7,6 +7,21 @@ import {
 import {Subscription} from 'rxjs';
 import type {AccelerometerData, GyroscopeData} from '../types';
 
+export enum HazardType {
+  MODERATE_BUMP = 'moderate_bump',
+  ROUGH_ROAD = 'rough_road',
+  SPEED_BUMP = 'speed_bump',
+}
+
+export interface HazardDetection {
+  type: HazardType;
+  magnitude: number;
+  confidence: number;
+  timestamp: number;
+  accelerometer: AccelerometerData;
+  gyroscope: GyroscopeData;
+}
+
 export interface VerboseSensorData {
   accelerometer: AccelerometerData;
   gyroscope: GyroscopeData;
@@ -16,6 +31,11 @@ export interface VerboseSensorData {
   maxMagnitude: number;
   maxAccelerometer: AccelerometerData;
   maxGyroscope: GyroscopeData;
+}
+
+interface SpikeRecord {
+  magnitude: number;
+  timestamp: number;
 }
 
 export class SensorService {
@@ -28,7 +48,7 @@ export class SensorService {
   private latestAccelerometer: AccelerometerData | null = null;
   private latestGyroscope: GyroscopeData | null = null;
 
-  private onDetectionCallback: ((accel: AccelerometerData, gyro: GyroscopeData) => void) | null = null;
+  private onDetectionCallback: ((detection: HazardDetection) => void) | null = null;
 
   // Verbose mode
   private verboseMode: boolean = false;
@@ -37,6 +57,17 @@ export class SensorService {
   private maxAccelerometer: AccelerometerData | null = null;
   private maxGyroscope: GyroscopeData | null = null;
   private spikeThreshold: number = 1.5; // g's - threshold to highlight spikes
+
+  // Temporal pattern detection
+  private spikeHistory: SpikeRecord[] = [];
+  private consecutiveSpikeCount: number = 0;
+  private lastSpikeTime: number = 0;
+  private readonly MODERATE_THRESHOLD = 0.2; // g's
+  private readonly SPEED_BUMP_THRESHOLD = 1.0; // g's
+  private readonly TIME_WINDOW_MS = 3000; // 3 seconds
+  private readonly ROUGH_ROAD_CONSECUTIVE_THRESHOLD = 8;
+  private readonly MODERATE_BUMP_MAX_SPIKES = 3;
+  private readonly SPIKE_RESET_INTERVAL_MS = 500; // Reset if no spike for 500ms
 
   private constructor() {}
 
@@ -55,13 +86,14 @@ export class SensorService {
     setUpdateIntervalForType(SensorTypes.gyroscope, intervalMs);
   }
 
-  public startMonitoring(onDetection: (accel: AccelerometerData, gyro: GyroscopeData) => void): void {
+  public startMonitoring(onDetection: (detection: HazardDetection) => void): void {
     if (this.isMonitoring) {
       console.log('Sensor monitoring already active');
       return;
     }
 
     this.onDetectionCallback = onDetection;
+    this.resetTemporalState();
     this.setSamplingRate(this.samplingRate);
 
     this.accelerometerSubscription = accelerometer.subscribe(
@@ -112,7 +144,14 @@ export class SensorService {
     this.latestAccelerometer = null;
     this.latestGyroscope = null;
     this.onDetectionCallback = null;
+    this.resetTemporalState();
     console.log('Sensor monitoring stopped');
+  }
+
+  private resetTemporalState(): void {
+    this.spikeHistory = [];
+    this.consecutiveSpikeCount = 0;
+    this.lastSpikeTime = 0;
   }
 
   private checkForBump(): void {
@@ -122,6 +161,7 @@ export class SensorService {
 
     const magnitude = this.calculateMagnitude(this.latestAccelerometer);
     const dynamicAccel = this.calculateDynamicAccel(this.latestAccelerometer);
+    const now = Date.now();
 
     // Track maximum values for verbose mode
     if (magnitude > this.maxMagnitude) {
@@ -145,18 +185,86 @@ export class SensorService {
       });
     }
 
-    // Standard bump detection
-    if (this.onDetectionCallback) {
-      // Threshold for bump detection (in g's)
-      // Typical values:
-      // - Normal road: 0.1-0.3g
-      // - Small bump: 0.5-1.0g
-      // - Large pothole: 1.5-3.0g
-      const BUMP_THRESHOLD = 1.5;
+    // Pattern-based hazard detection
+    if (!this.onDetectionCallback) {
+      return;
+    }
 
-      if (magnitude > BUMP_THRESHOLD) {
-        console.log(`Bump detected! Magnitude: ${magnitude.toFixed(2)}g`);
-        this.onDetectionCallback(this.latestAccelerometer, this.latestGyroscope);
+    // Fast path: Speed bump detection (>1.0g)
+    if (magnitude >= this.SPEED_BUMP_THRESHOLD) {
+      const detection: HazardDetection = {
+        type: HazardType.SPEED_BUMP,
+        magnitude,
+        confidence: Math.min(1.0, magnitude / 1.6), // Normalize to max observed 1.6g
+        timestamp: now,
+        accelerometer: {...this.latestAccelerometer},
+        gyroscope: {...this.latestGyroscope},
+      };
+      console.log(`Speed bump detected! Magnitude: ${magnitude.toFixed(2)}g`);
+      this.onDetectionCallback(detection);
+      this.resetTemporalState();
+      return;
+    }
+
+    // Moderate bump / rough road detection (0.2-0.5g range)
+    if (magnitude >= this.MODERATE_THRESHOLD) {
+      // Record this spike
+      this.spikeHistory.push({magnitude, timestamp: now});
+
+      // Check if consecutive with previous spike
+      if (now - this.lastSpikeTime < this.SPIKE_RESET_INTERVAL_MS) {
+        this.consecutiveSpikeCount++;
+      } else {
+        // Reset if gap is too large
+        this.consecutiveSpikeCount = 1;
+      }
+
+      this.lastSpikeTime = now;
+
+      // Clean old spikes outside time window
+      this.spikeHistory = this.spikeHistory.filter(
+        spike => now - spike.timestamp < this.TIME_WINDOW_MS
+      );
+
+      // Rough road detection: 8+ consecutive spikes
+      if (this.consecutiveSpikeCount >= this.ROUGH_ROAD_CONSECUTIVE_THRESHOLD) {
+        const avgMagnitude = this.spikeHistory.reduce((sum, s) => sum + s.magnitude, 0) / this.spikeHistory.length;
+        const detection: HazardDetection = {
+          type: HazardType.ROUGH_ROAD,
+          magnitude: avgMagnitude,
+          confidence: Math.min(1.0, this.consecutiveSpikeCount / 15), // Higher confidence with more spikes
+          timestamp: now,
+          accelerometer: {...this.latestAccelerometer},
+          gyroscope: {...this.latestGyroscope},
+        };
+        console.log(`Rough road detected! ${this.consecutiveSpikeCount} consecutive spikes, avg: ${avgMagnitude.toFixed(2)}g`);
+        this.onDetectionCallback(detection);
+        this.resetTemporalState();
+        return;
+      }
+
+      // Moderate bump detection: 2-3 spikes within window
+      if (this.spikeHistory.length >= 2 && this.spikeHistory.length <= this.MODERATE_BUMP_MAX_SPIKES) {
+        // Check if we've had a gap (indicating discrete bump completion)
+        if (now - this.lastSpikeTime > this.SPIKE_RESET_INTERVAL_MS / 2) {
+          const avgMagnitude = this.spikeHistory.reduce((sum, s) => sum + s.magnitude, 0) / this.spikeHistory.length;
+          const detection: HazardDetection = {
+            type: HazardType.MODERATE_BUMP,
+            magnitude: avgMagnitude,
+            confidence: Math.min(1.0, this.spikeHistory.length / 3), // Higher confidence with more detections
+            timestamp: now,
+            accelerometer: {...this.latestAccelerometer},
+            gyroscope: {...this.latestGyroscope},
+          };
+          console.log(`Moderate bump detected! ${this.spikeHistory.length} spikes, avg: ${avgMagnitude.toFixed(2)}g`);
+          this.onDetectionCallback(detection);
+          this.resetTemporalState();
+        }
+      }
+    } else {
+      // Below threshold - reset if enough time has passed
+      if (now - this.lastSpikeTime > this.SPIKE_RESET_INTERVAL_MS) {
+        this.consecutiveSpikeCount = 0;
       }
     }
   }

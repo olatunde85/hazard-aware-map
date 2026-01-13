@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import RNFS from 'react-native-fs';
 import Share from 'react-native-share';
-import {SensorService} from '@services/SensorService';
+import {SensorService, type HazardDetection} from '@services/SensorService';
 import {LocationService} from '@services/LocationService';
 import {ApiService} from '@services/ApiService';
 import {AuthService} from '@services/AuthService';
@@ -60,7 +60,7 @@ export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.El
     }
   };
 
-  const handleBumpDetection = async (accel: any, gyro: any) => {
+  const handleBumpDetection = async (hazardDetection: HazardDetection) => {
     try {
       const locationService = LocationService.getInstance();
       const location = locationService.getLastKnownLocation();
@@ -75,18 +75,14 @@ export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.El
         return;
       }
 
-      const magnitude = Math.sqrt(
-        accel.x * accel.x + accel.y * accel.y + accel.z * accel.z,
-      ) / 9.8;
-
       const detection: BumpDetection = {
         latitude: location.latitude,
         longitude: location.longitude,
         accuracy: location.accuracy,
-        magnitude,
-        timestamp: Date.now(),
-        accelerometerData: accel,
-        gyroscopeData: gyro,
+        magnitude: hazardDetection.magnitude,
+        timestamp: hazardDetection.timestamp,
+        accelerometerData: hazardDetection.accelerometer,
+        gyroscopeData: hazardDetection.gyroscope,
         uploaded: false,
       };
 
@@ -94,7 +90,7 @@ export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.El
       await db.saveDetection(detection);
       await updateStatistics();
 
-      console.log('Detection saved to database');
+      console.log(`${hazardDetection.type} detected and saved! Magnitude: ${hazardDetection.magnitude.toFixed(2)}g, Confidence: ${(hazardDetection.confidence * 100).toFixed(0)}%`);
     } catch (error) {
       console.error('Failed to save detection:', error);
     }
@@ -168,8 +164,18 @@ export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.El
         timestamp: Date.now(),
       };
 
-      console.log('Simulating bump detection...');
-      await handleBumpDetection(fakeAccelerometer, fakeGyroscope);
+      // Simulate a speed bump detection (high magnitude)
+      const fakeDetection: HazardDetection = {
+        type: 'speed_bump' as any,
+        magnitude: 1.53, // High magnitude for speed bump
+        confidence: 0.95,
+        timestamp: Date.now(),
+        accelerometer: fakeAccelerometer,
+        gyroscope: fakeGyroscope,
+      };
+
+      console.log('Simulating speed bump detection...');
+      await handleBumpDetection(fakeDetection);
     } catch (error) {
       console.error('Failed to simulate bump:', error);
     }
