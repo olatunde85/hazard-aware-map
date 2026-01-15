@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   Alert,
   Platform,
+  Modal,
 } from 'react-native';
 import RNFS from 'react-native-fs';
 import Share from 'react-native-share';
@@ -20,8 +21,16 @@ interface MonitorScreenProps {
   onLogout?: () => void;
 }
 
+interface PendingConfirmation {
+  hazardDetection: HazardDetection;
+  location: any;
+}
+
 export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.Element {
   const [isMonitoring, setIsMonitoring] = useState(false);
+  const [confirmationMode, setConfirmationMode] = useState(false);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation | null>(null);
   const [statistics, setStatistics] = useState({
     total: 0,
     today: 0,
@@ -75,6 +84,22 @@ export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.El
         return;
       }
 
+      // If confirmation mode is enabled, show dialog instead of auto-saving
+      if (confirmationMode) {
+        setPendingConfirmation({hazardDetection, location});
+        setShowConfirmDialog(true);
+        return;
+      }
+
+      // Auto-save without confirmation
+      await saveDetection(hazardDetection, location);
+    } catch (error) {
+      console.error('Failed to save detection:', error);
+    }
+  };
+
+  const saveDetection = async (hazardDetection: HazardDetection, location: any, confirmedType?: string) => {
+    try {
       const detection: BumpDetection = {
         latitude: location.latitude,
         longitude: location.longitude,
@@ -90,10 +115,28 @@ export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.El
       await db.saveDetection(detection);
       await updateStatistics();
 
-      console.log(`${hazardDetection.type} detected and saved! Magnitude: ${hazardDetection.magnitude.toFixed(2)}g, Confidence: ${(hazardDetection.confidence * 100).toFixed(0)}%`);
+      const detectionType = confirmedType || hazardDetection.type;
+      console.log(`${detectionType} detected and saved! Magnitude: ${hazardDetection.magnitude.toFixed(2)}g, Confidence: ${(hazardDetection.confidence * 100).toFixed(0)}%`);
     } catch (error) {
       console.error('Failed to save detection:', error);
+      throw error;
     }
+  };
+
+  const handleConfirmation = async (confirmedType: string | null) => {
+    setShowConfirmDialog(false);
+
+    if (confirmedType && confirmedType !== 'none' && pendingConfirmation) {
+      await saveDetection(
+        pendingConfirmation.hazardDetection,
+        pendingConfirmation.location,
+        confirmedType
+      );
+    } else {
+      console.log('Detection rejected by user');
+    }
+
+    setPendingConfirmation(null);
   };
 
   const toggleMonitoring = async () => {
@@ -274,6 +317,57 @@ export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.El
 
   return (
     <View style={styles.container}>
+      {/* Confirmation Dialog Modal */}
+      <Modal
+        visible={showConfirmDialog}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => handleConfirmation(null)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.confirmDialog}>
+            <Text style={styles.dialogTitle}>Confirm Hazard?</Text>
+            <Text style={styles.dialogSubtitle}>
+              Detected: {pendingConfirmation?.hazardDetection.type.replace('_', ' ')}
+            </Text>
+            <Text style={styles.dialogMagnitude}>
+              {pendingConfirmation?.hazardDetection.magnitude.toFixed(2)}g
+            </Text>
+
+            <View style={styles.dialogButtons}>
+              <TouchableOpacity
+                style={[styles.dialogButton, styles.speedHumpButton]}
+                onPress={() => handleConfirmation('speed_hump')}>
+                <Text style={styles.dialogButtonText}>Speed Hump</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.dialogButton, styles.bumpButton]}
+                onPress={() => handleConfirmation('bump')}>
+                <Text style={styles.dialogButtonText}>Bump</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.dialogButton, styles.roughRoadButton]}
+                onPress={() => handleConfirmation('rough_road')}>
+                <Text style={styles.dialogButtonText}>Rough Road</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.dialogButton, styles.potholeButton]}
+                onPress={() => handleConfirmation('pothole')}>
+                <Text style={styles.dialogButtonText}>Pothole</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.dialogButton, styles.noneButton]}
+                onPress={() => handleConfirmation('none')}>
+                <Text style={[styles.dialogButtonText, styles.noneButtonText]}>None</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <View style={styles.statusContainer}>
         <View
           style={[
@@ -284,6 +378,23 @@ export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.El
         <Text style={styles.statusText}>
           {isMonitoring ? 'Monitoring Active' : 'Monitoring Inactive'}
         </Text>
+      </View>
+
+      {/* Confirmation Mode Toggle */}
+      <View style={styles.settingContainer}>
+        <TouchableOpacity
+          style={styles.checkboxContainer}
+          onPress={() => setConfirmationMode(!confirmationMode)}>
+          <View style={[styles.checkbox, confirmationMode && styles.checkboxChecked]}>
+            {confirmationMode && <Text style={styles.checkmark}>✓</Text>}
+          </View>
+          <Text style={styles.checkboxLabel}>Human Confirmation Mode</Text>
+        </TouchableOpacity>
+        {confirmationMode && (
+          <Text style={styles.confirmationHint}>
+            You'll be asked to confirm each detection
+          </Text>
+        )}
       </View>
 
       <View style={styles.statsContainer}>
@@ -500,5 +611,129 @@ const styles = StyleSheet.create({
     color: '#666',
     lineHeight: 20,
     marginBottom: 10,
+  },
+  // Confirmation mode styles
+  settingContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  checkboxContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#007AFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  checkboxChecked: {
+    backgroundColor: '#007AFF',
+  },
+  checkmark: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  checkboxLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  confirmationHint: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 8,
+    marginLeft: 36,
+    fontStyle: 'italic',
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  confirmDialog: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  dialogTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  dialogSubtitle: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 4,
+    textTransform: 'capitalize',
+  },
+  dialogMagnitude: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#007AFF',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  dialogButtons: {
+    gap: 12,
+  },
+  dialogButton: {
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    borderWidth: 2,
+  },
+  dialogButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  speedHumpButton: {
+    backgroundColor: '#FF3B30',
+    borderColor: '#FF3B30',
+  },
+  bumpButton: {
+    backgroundColor: '#FF9500',
+    borderColor: '#FF9500',
+  },
+  roughRoadButton: {
+    backgroundColor: '#FFCC00',
+    borderColor: '#FFCC00',
+  },
+  potholeButton: {
+    backgroundColor: '#8E8E93',
+    borderColor: '#8E8E93',
+  },
+  noneButton: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#8E8E93',
+  },
+  noneButtonText: {
+    color: '#8E8E93',
   },
 });
