@@ -127,6 +127,25 @@ export class Database {
     return detections;
   }
 
+  public async getAllDetections(limit: number = 10000): Promise<BumpDetection[]> {
+    if (!this.db) {
+      throw new Error('Database not opened');
+    }
+
+    const result = await this.db.executeSql(
+      'SELECT * FROM detections ORDER BY timestamp DESC LIMIT ?',
+      [limit],
+    );
+
+    const detections: BumpDetection[] = [];
+    for (let i = 0; i < result[0].rows.length; i++) {
+      const row = result[0].rows.item(i);
+      detections.push(this.mapRowToDetection(row));
+    }
+
+    return detections;
+  }
+
   public async markDetectionsAsUploaded(ids: number[]): Promise<void> {
     if (!this.db) {
       throw new Error('Database not opened');
@@ -188,6 +207,16 @@ export class Database {
       'DELETE FROM detections WHERE uploaded = 1 AND timestamp < ?',
       [cutoffTimestamp],
     );
+
+    return result[0].rowsAffected;
+  }
+
+  public async clearAllDetections(): Promise<number> {
+    if (!this.db) {
+      throw new Error('Database not opened');
+    }
+
+    const result = await this.db.executeSql('DELETE FROM detections');
 
     return result[0].rowsAffected;
   }

@@ -56,6 +56,7 @@ function MainTabs({onLogout}: MainTabsProps): React.JSX.Element {
           title: 'Monitor',
           tabBarIcon: ({color}) => <Text style={{fontSize: 24}}>📊</Text>,
           headerTitle: 'Bump Aware Monitor',
+          headerShown: false,
         }}>
         {() => <MonitorScreen onLogout={onLogout} />}
       </Tab.Screen>
