@@ -43,7 +43,7 @@ export interface Hazard {
   confidence: number;
   detectionCount: number;
   lastReported: string;
-  hazardType: 'pothole' | 'speed_bump' | 'rough_road' | 'unknown';
+  hazardType: 'pothole' | 'speed_hump' | 'bump' | 'rough_road' | 'unknown';
 }
 
 export interface Alert {
