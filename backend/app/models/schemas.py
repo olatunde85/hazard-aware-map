@@ -6,7 +6,8 @@ from enum import Enum
 
 class HazardTypeEnum(str, Enum):
     POTHOLE = "pothole"
-    SPEED_BUMP = "speed_bump"
+    SPEED_HUMP = "speed_hump"
+    BUMP = "bump"
     ROUGH_ROAD = "rough_road"
     UNKNOWN = "unknown"
 

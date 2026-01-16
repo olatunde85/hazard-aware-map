@@ -128,8 +128,10 @@ class SpatialClusteringService:
         # Weighted combination: 70% average, 30% max
         weighted_magnitude = 0.7 * avg_magnitude + 0.3 * max_magnitude
 
-        # Convert to 0-10 scale (assuming max realistic magnitude is 5g)
-        severity = min(10.0, (weighted_magnitude / 5.0) * 10.0)
+        # Convert to 0-10 scale
+        # Based on field data: 0.2-0.5g typical range, 1.6g max for speed humps
+        # Use 1.0g as reference for max severity (10/10)
+        severity = min(10.0, (weighted_magnitude / 1.0) * 10.0)
 
         return round(severity, 2)
 

@@ -232,16 +232,52 @@ export function MapScreen(): React.JSX.Element {
     }
   };
 
-  const getSeverityColor = (severity: string): string => {
-    switch (severity.toLowerCase()) {
-      case 'high':
-        return '#FF3B30';
-      case 'medium':
-        return '#FF9500';
-      case 'low':
-        return '#FFCC00';
+  const getHazardColor = (hazardType: string, severity: number): string => {
+    // Color coding by hazard type with severity-based intensity
+    switch (hazardType.toLowerCase()) {
+      case 'pothole':
+        return severity >= 5 ? '#FF3B30' : '#FF6B6B'; // Red shades
+      case 'speed_hump':
+        return severity >= 5 ? '#FF9500' : '#FFB340'; // Orange shades
+      case 'bump':
+        return severity >= 5 ? '#FFA500' : '#FFC470'; // Amber shades
+      case 'rough_road':
+        return severity >= 5 ? '#8B4513' : '#A0522D'; // Brown shades
+      case 'unknown':
       default:
-        return '#999999';
+        return '#999999'; // Gray
+    }
+  };
+
+  const getHazardEmoji = (hazardType: string): string => {
+    switch (hazardType.toLowerCase()) {
+      case 'pothole':
+        return '🕳️';
+      case 'speed_hump':
+        return '🚧';
+      case 'bump':
+        return '⚠️';
+      case 'rough_road':
+        return '🌊';
+      case 'unknown':
+      default:
+        return '❓';
+    }
+  };
+
+  const getHazardDisplayName = (hazardType: string): string => {
+    switch (hazardType.toLowerCase()) {
+      case 'pothole':
+        return 'Pothole';
+      case 'speed_hump':
+        return 'Speed Hump';
+      case 'bump':
+        return 'Bump';
+      case 'rough_road':
+        return 'Rough Road';
+      case 'unknown':
+      default:
+        return 'Unknown Hazard';
     }
   };
 
@@ -492,29 +528,35 @@ export function MapScreen(): React.JSX.Element {
           setMapTilesLoaded(true);
         }}>
 
-        {hazards.map(hazard => (
-          <React.Fragment key={hazard.id}>
-            <Marker
-              coordinate={{
-                latitude: hazard.latitude,
-                longitude: hazard.longitude,
-              }}
-              title={`Severity ${hazard.severity} Hazard`}
-              description={`${hazard.detectionCount} detections • Confidence: ${(hazard.confidence * 100).toFixed(0)}%`}
-              pinColor={getSeverityColor(hazard.severity.toString())}
-            />
-            <Circle
-              center={{
-                latitude: hazard.latitude,
-                longitude: hazard.longitude,
-              }}
-              radius={15}
-              fillColor={`${getSeverityColor(hazard.severity.toString())}30`}
-              strokeColor={getSeverityColor(hazard.severity.toString())}
-              strokeWidth={2}
-            />
-          </React.Fragment>
-        ))}
+        {hazards.map(hazard => {
+          const color = getHazardColor(hazard.hazardType, hazard.severity);
+          const emoji = getHazardEmoji(hazard.hazardType);
+          const displayName = getHazardDisplayName(hazard.hazardType);
+
+          return (
+            <React.Fragment key={hazard.id}>
+              <Marker
+                coordinate={{
+                  latitude: hazard.latitude,
+                  longitude: hazard.longitude,
+                }}
+                title={`${emoji} ${displayName}`}
+                description={`Severity: ${hazard.severity.toFixed(1)}/10 • ${hazard.detectionCount} detections • ${(hazard.confidence * 100).toFixed(0)}% confidence`}
+                pinColor={color}
+              />
+              <Circle
+                center={{
+                  latitude: hazard.latitude,
+                  longitude: hazard.longitude,
+                }}
+                radius={15}
+                fillColor={`${color}30`}
+                strokeColor={color}
+                strokeWidth={2}
+              />
+            </React.Fragment>
+          );
+        })}
 
         {/* Destination Marker */}
         {destination && (
@@ -558,17 +600,22 @@ export function MapScreen(): React.JSX.Element {
       {/* Legend */}
       {!searchModalVisible && (
         <View style={styles.legend}>
+          <Text style={styles.legendTitle}>Hazard Types</Text>
           <View style={styles.legendItem}>
-            <View style={[styles.legendDot, {backgroundColor: '#FF0000'}]} />
-            <Text style={styles.legendText}>High</Text>
+            <Text style={styles.legendEmoji}>{getHazardEmoji('pothole')}</Text>
+            <Text style={styles.legendText}>Pothole</Text>
           </View>
           <View style={styles.legendItem}>
-            <View style={[styles.legendDot, {backgroundColor: '#FF9500'}]} />
-            <Text style={styles.legendText}>Medium</Text>
+            <Text style={styles.legendEmoji}>{getHazardEmoji('speed_hump')}</Text>
+            <Text style={styles.legendText}>Speed Hump</Text>
           </View>
           <View style={styles.legendItem}>
-            <View style={[styles.legendDot, {backgroundColor: '#FFD700'}]} />
-            <Text style={styles.legendText}>Low</Text>
+            <Text style={styles.legendEmoji}>{getHazardEmoji('bump')}</Text>
+            <Text style={styles.legendText}>Bump</Text>
+          </View>
+          <View style={styles.legendItem}>
+            <Text style={styles.legendEmoji}>{getHazardEmoji('rough_road')}</Text>
+            <Text style={styles.legendText}>Rough Road</Text>
           </View>
         </View>
       )}
@@ -860,17 +907,29 @@ const styles = StyleSheet.create({
     left: 10,
     backgroundColor: '#FFFFFF',
     borderRadius: 8,
-    padding: 8,
+    padding: 10,
+    paddingTop: 8,
     shadowColor: '#000',
     shadowOffset: {width: 0, height: 1},
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
   },
+  legendTitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#666',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 2,
+    marginVertical: 3,
+  },
+  legendEmoji: {
+    fontSize: 14,
+    marginRight: 6,
   },
   legendDot: {
     width: 10,
@@ -879,7 +938,7 @@ const styles = StyleSheet.create({
     marginRight: 6,
   },
   legendText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#333',
   },
   // Compact Search Bar

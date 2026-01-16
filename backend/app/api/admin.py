@@ -198,9 +198,9 @@ async def process_detections(
                 # Rough road: many consecutive moderate bumps
                 hazard_type = "rough_road"
             elif avg_magnitude >= 0.2:
-                # Could be pothole or speed bump
+                # Could be pothole or bump
                 if avg_magnitude <= 0.31:
-                    hazard_type = "speed_bump"
+                    hazard_type = "bump"
                 else:
                     hazard_type = "pothole"
             else:
