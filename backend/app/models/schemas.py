@@ -35,6 +35,7 @@ class DetectionCreate(BaseModel):
     timestamp: datetime
     accelerometer: AccelerometerDataSchema
     gyroscope: GyroscopeDataSchema
+    confirmed_type: Optional[str] = None  # Human-confirmed hazard type
 
 
 class DetectionBatch(BaseModel):
