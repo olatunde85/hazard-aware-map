@@ -59,6 +59,9 @@ class Detection(Base):
     processed = Column(Boolean, default=False, index=True)
     hazard_id = Column(Integer, ForeignKey("hazards.id"), nullable=True)
 
+    # Human confirmation (optional)
+    confirmed_type = Column(String, nullable=True)  # Human-confirmed hazard type
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="detections")
@@ -78,7 +81,7 @@ class Hazard(Base):
     longitude = Column(Float, nullable=False)
 
     # Classification
-    hazard_type = Column(Enum(HazardType), default=HazardType.UNKNOWN)
+    hazard_type = Column(String, nullable=False, default="unknown")
     severity = Column(Float, nullable=False)  # 0.0-10.0 scale
     confidence = Column(Float, nullable=False)  # 0.0-1.0 scale
 

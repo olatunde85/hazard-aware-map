@@ -109,6 +109,7 @@ export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.El
         accelerometerData: hazardDetection.accelerometer,
         gyroscopeData: hazardDetection.gyroscope,
         uploaded: false,
+        confirmedType: confirmedType || null, // Save human confirmation
       };
 
       const db = Database.getInstance();
@@ -116,7 +117,7 @@ export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.El
       await updateStatistics();
 
       const detectionType = confirmedType || hazardDetection.type;
-      console.log(`${detectionType} detected and saved! Magnitude: ${hazardDetection.magnitude.toFixed(2)}g, Confidence: ${(hazardDetection.confidence * 100).toFixed(0)}%`);
+      console.log(`${detectionType} detected and saved! Magnitude: ${hazardDetection.magnitude.toFixed(2)}g, Confidence: ${(hazardDetection.confidence * 100).toFixed(0)}%${confirmedType ? ' [Human Confirmed]' : ''}`);
     } catch (error) {
       console.error('Failed to save detection:', error);
       throw error;

@@ -46,6 +46,7 @@ async def create_detections_batch(
             gyroscope_y=detection_data.gyroscope.y,
             gyroscope_z=detection_data.gyroscope.z,
             gyroscope_timestamp=detection_data.gyroscope.timestamp,
+            confirmed_type=detection_data.confirmed_type,  # Save human confirmation
             processed=False,
         )
 

@@ -32,6 +32,7 @@ export interface BumpDetection {
   accelerometerData: AccelerometerData;
   gyroscopeData: GyroscopeData;
   uploaded: boolean;
+  confirmedType?: string | null; // Human-confirmed hazard type
 }
 
 export interface Hazard {

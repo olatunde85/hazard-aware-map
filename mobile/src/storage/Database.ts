@@ -51,9 +51,19 @@ export class Database {
         gyroscope_z REAL NOT NULL,
         gyroscope_timestamp INTEGER NOT NULL,
         uploaded INTEGER DEFAULT 0,
+        confirmed_type TEXT NULL,
         created_at INTEGER DEFAULT (strftime('%s', 'now'))
       );
     `);
+
+    // Add confirmed_type column to existing tables (migration)
+    try {
+      await this.db.executeSql(`
+        ALTER TABLE detections ADD COLUMN confirmed_type TEXT NULL;
+      `);
+    } catch (error) {
+      // Column might already exist, ignore error
+    }
 
     await this.db.executeSql(`
       CREATE INDEX IF NOT EXISTS idx_uploaded ON detections(uploaded);
@@ -74,8 +84,8 @@ export class Database {
         latitude, longitude, accuracy, magnitude, timestamp,
         accelerometer_x, accelerometer_y, accelerometer_z, accelerometer_timestamp,
         gyroscope_x, gyroscope_y, gyroscope_z, gyroscope_timestamp,
-        uploaded
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        uploaded, confirmed_type
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         detection.latitude,
         detection.longitude,
@@ -91,6 +101,7 @@ export class Database {
         detection.gyroscopeData.z,
         detection.gyroscopeData.timestamp,
         detection.uploaded ? 1 : 0,
+        detection.confirmedType || null,
       ],
     );
 
@@ -202,6 +213,7 @@ export class Database {
         timestamp: row.gyroscope_timestamp,
       },
       uploaded: row.uploaded === 1,
+      confirmedType: row.confirmed_type,
     };
   }
 
