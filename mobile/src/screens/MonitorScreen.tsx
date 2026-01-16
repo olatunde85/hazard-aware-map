@@ -5,7 +5,6 @@ import {
   View,
   TouchableOpacity,
   Alert,
-  Platform,
   Modal,
 } from 'react-native';
 import RNFS from 'react-native-fs';
@@ -225,10 +224,41 @@ export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.El
     }
   };
 
+  const clearDatabase = async () => {
+    Alert.alert(
+      'Clear Database',
+      'This will delete ALL detections from your device. This cannot be undone. Are you sure?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Clear All',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const db = Database.getInstance();
+              const deletedCount = await db.clearAllDetections();
+              await updateStatistics();
+              Alert.alert(
+                'Database Cleared',
+                `Deleted ${deletedCount} detections from local database.`,
+              );
+            } catch (error) {
+              console.error('Failed to clear database:', error);
+              Alert.alert('Error', 'Failed to clear database. Please try again.');
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const exportDetections = async () => {
     try {
       const db = Database.getInstance();
-      const allDetections = await db.getPendingDetections(1000);
+      const allDetections = await db.getAllDetections(10000);
 
       if (allDetections.length === 0) {
         Alert.alert('No Data', 'No detections to export');
@@ -239,11 +269,15 @@ export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.El
         exported_at: new Date().toISOString(),
         total_count: allDetections.length,
         detections: allDetections.map(d => ({
+          id: d.id,
           latitude: d.latitude,
           longitude: d.longitude,
           accuracy: d.accuracy,
           magnitude: d.magnitude,
           timestamp: d.timestamp,
+          timestamp_iso: new Date(d.timestamp * 1000).toISOString(),
+          confirmed_type: d.confirmedType || null,
+          uploaded: d.uploaded,
           accelerometer: {
             x: d.accelerometerData.x,
             y: d.accelerometerData.y,
@@ -260,22 +294,54 @@ export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.El
       };
 
       const fileName = `bump_detections_${Date.now()}.json`;
-      const filePath = `${RNFS.DocumentDirectoryPath}/${fileName}`;
+      // Use CachesDirectoryPath for better Android compatibility
+      const filePath = `${RNFS.CachesDirectoryPath}/${fileName}`;
 
+      console.log(`Writing export file to: ${filePath}`);
       await RNFS.writeFile(filePath, JSON.stringify(exportData, null, 2), 'utf8');
 
-      await Share.open({
+      // Verify file was written
+      const fileExists = await RNFS.exists(filePath);
+      console.log(`File exists: ${fileExists}`);
+
+      if (!fileExists) {
+        throw new Error('Failed to write export file');
+      }
+
+      // Share the file with proper file URI
+      const shareOptions = {
         title: 'Export Bump Detections',
-        message: `Exporting ${allDetections.length} detections`,
-        url: Platform.OS === 'android' ? `file://${filePath}` : filePath,
+        subject: 'Bump Detection Data',
+        url: `file://${filePath}`,
         type: 'application/json',
-        subject: 'Bump Detection Data Export',
+        failOnCancel: false,
+      };
+
+      console.log('Share options:', shareOptions);
+      const result = await Share.open(shareOptions);
+      console.log('Share result:', result);
+
+      Alert.alert(
+        'Export Successful',
+        `Exported ${allDetections.length} detections to ${fileName}`,
+      );
+    } catch (error: any) {
+      console.error('Failed to export detections:', error);
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        stack: error.stack,
       });
 
-      console.log(`Exported ${allDetections.length} detections to ${fileName}`);
-    } catch (error) {
-      console.error('Failed to export detections:', error);
-      Alert.alert('Export Failed', 'Could not export detections. Please try again.');
+      // More specific error messages
+      if (error.message?.includes('User did not share')) {
+        console.log('User cancelled share dialog');
+      } else {
+        Alert.alert(
+          'Export Failed',
+          `Error: ${error.message || 'Could not export detections. Please try again.'}`,
+        );
+      }
     }
   };
 
@@ -369,6 +435,14 @@ export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.El
         </View>
       </Modal>
 
+      {/* Header with Logout */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Bump Monitor</Text>
+        <TouchableOpacity onPress={handleLogout}>
+          <Text style={styles.logoutLink}>Logout</Text>
+        </TouchableOpacity>
+      </View>
+
       <View style={styles.statusContainer}>
         <View
           style={[
@@ -401,7 +475,7 @@ export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.El
       <View style={styles.statsContainer}>
         <View style={styles.statBox}>
           <Text style={styles.statValue}>{statistics.total}</Text>
-          <Text style={styles.statLabel}>Total Detections</Text>
+          <Text style={styles.statLabel}>Tot. Detections</Text>
         </View>
         <View style={styles.statBox}>
           <Text style={styles.statValue}>{statistics.today}</Text>
@@ -409,7 +483,7 @@ export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.El
         </View>
         <View style={styles.statBox}>
           <Text style={styles.statValue}>{statistics.uploaded}</Text>
-          <Text style={styles.statLabel}>Uploaded</Text>
+          <Text style={styles.statLabel}>Synced</Text>
         </View>
         <View style={styles.statBox}>
           <Text style={styles.statValue}>{statistics.pending}</Text>
@@ -465,6 +539,20 @@ export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.El
             Export to File ({statistics.total})
           </Text>
         </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.button, styles.clearButton]}
+          onPress={clearDatabase}
+          disabled={statistics.total === 0}>
+          <Text
+            style={[
+              styles.buttonText,
+              styles.clearButtonText,
+              statistics.total === 0 && styles.disabledText,
+            ]}>
+            Clear Database ({statistics.total})
+          </Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.infoContainer}>
@@ -476,14 +564,6 @@ export function MonitorScreen({onLogout}: MonitorScreenProps = {}): React.JSX.El
           potholes.
         </Text>
       </View>
-
-      <TouchableOpacity
-        style={[styles.button, styles.logoutButton]}
-        onPress={handleLogout}>
-        <Text style={[styles.buttonText, styles.logoutButtonText]}>
-          Logout
-        </Text>
-      </TouchableOpacity>
     </View>
   );
 }
@@ -494,12 +574,29 @@ const styles = StyleSheet.create({
     backgroundColor: '#F5F5F5',
     padding: 20,
   },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+    paddingTop: 10,
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  logoutLink: {
+    fontSize: 14,
+    color: '#FF3B30',
+    textDecorationLine: 'underline',
+  },
   statusContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 30,
-    marginTop: 20,
+    marginTop: 10,
   },
   statusIndicator: {
     width: 12,
@@ -508,7 +605,7 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   statusText: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
     color: '#333',
   },
@@ -531,14 +628,14 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   statValue: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#007AFF',
   },
   statLabel: {
-    fontSize: 12,
+    fontSize: 10,
     color: '#666',
-    marginTop: 5,
+    marginTop: 4,
     textAlign: 'center',
   },
   buttonContainer: {
@@ -571,11 +668,10 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#34C759',
   },
-  logoutButton: {
+  clearButton: {
     backgroundColor: '#FFFFFF',
     borderWidth: 2,
     borderColor: '#FF3B30',
-    marginTop: 20,
   },
   buttonText: {
     fontSize: 18,
@@ -591,7 +687,7 @@ const styles = StyleSheet.create({
   exportButtonText: {
     color: '#34C759',
   },
-  logoutButtonText: {
+  clearButtonText: {
     color: '#FF3B30',
   },
   disabledText: {
@@ -608,7 +704,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   infoText: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#666',
     lineHeight: 20,
     marginBottom: 10,
