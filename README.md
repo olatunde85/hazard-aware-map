@@ -360,9 +360,81 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 For questions or support, please open an issue on GitHub.
 
+## Hazard Map Visualization
+
+For research publication and data sharing, we provide a standalone Google Maps visualization of field study results. This allows viewing the detected hazards without running the backend server.
+
+### Interactive Web Visualization
+
+**File**: `hazard_map_visualization.html`
+
+A self-contained HTML file that displays all hazards on an interactive Google Map with the same styling as the mobile app.
+
+**Features**:
+- Type-specific color coding (pothole: red, speed hump: orange, bump: amber, rough road: brown)
+- Emoji markers for instant recognition (🕳️🚧⚠️🌊)
+- Clickable markers showing detailed information:
+  - Hazard type with severity score (X.X/10)
+  - Confidence percentage
+  - Detection count
+  - Precise GPS coordinates
+- Legend showing all hazard types
+- Statistics panel with dataset composition
+- Centered on field study location
+
+**Setup**:
+1. Get a Google Maps API key from https://console.cloud.google.com/
+2. Open `hazard_map_visualization.html` in a text editor
+3. Replace `YOUR_API_KEY` on line 366 with your actual API key
+4. Open the file in any modern web browser
+
+**Free Tier**: Google Maps provides $200/month free credit (~28,000 map loads), which is sufficient for research visualization.
+
+### Export to PDF/PNG
+
+**Script**: `export_map_to_pdf.sh`
+
+Automatically generates high-quality PDF and PNG exports of the hazard map using Chrome headless mode.
+
+**Usage**:
+```bash
+# Make script executable (first time only)
+chmod +x export_map_to_pdf.sh
+
+# Run the export
+./export_map_to_pdf.sh
+```
+
+**Outputs**:
+- `hazard_map_visualization.pdf` (514 KB) - Print-ready PDF in landscape orientation
+- `hazard_map_visualization.png` (1.2 MB) - High-resolution image (1920×1080) for presentations
+
+**Requirements**:
+- Google Chrome installed (script auto-detects Chrome location)
+- Google Maps API key configured in HTML file
+
+**Use Cases**:
+- Attach PDF to research papers
+- Include PNG in presentations or posters
+- Share static visualizations with stakeholders
+- Archive field study results
+
+### Current Dataset
+
+The visualization includes the January 16, 2026 field study from Ibadan, Nigeria:
+- **Total hazards**: 32 (all human-confirmed)
+- **Rough road**: 17 (53.1%)
+- **Bump**: 9 (28.1%)
+- **Speed hump**: 6 (18.8%)
+- **Average severity**: 2.77/10
+- **Location**: 7.43-7.44°N, 3.93-3.95°E
+
+To update the visualization with new data, export hazards from the API and update the `hazards` array in the HTML file.
+
 ## Acknowledgments
 
 - DBSCAN clustering algorithm
 - OpenStreetMap for geospatial data
 - React Native community
 - FastAPI framework
+- Google Maps JavaScript API

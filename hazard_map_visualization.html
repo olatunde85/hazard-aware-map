@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bump Aware - Road Hazard Map (Ibadan, Nigeria)</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #map {
+            height: 100vh;
+            width: 100%;
+        }
+
+        .header {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: white;
+            padding: 15px 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            z-index: 1000;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 20px;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            font-size: 13px;
+            color: #666;
+        }
+
+        .legend {
+            position: absolute;
+            top: 100px;
+            left: 10px;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            z-index: 1000;
+            min-width: 200px;
+        }
+
+        .legend h3 {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 10px;
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 8px 0;
+        }
+
+        .legend-emoji {
+            font-size: 16px;
+            margin-right: 8px;
+            width: 24px;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .legend-text {
+            font-size: 13px;
+            color: #333;
+        }
+
+        .stats {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            z-index: 1000;
+            min-width: 200px;
+        }
+
+        .stats h3 {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+            font-size: 13px;
+        }
+
+        .stat-label {
+            color: #666;
+        }
+
+        .stat-value {
+            color: #333;
+            font-weight: 600;
+        }
+
+        .info-window-content {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            padding: 5px;
+        }
+
+        .info-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #333;
+        }
+
+        .info-detail {
+            font-size: 13px;
+            color: #666;
+            margin: 4px 0;
+        }
+
+        .info-detail strong {
+            color: #333;
+        }
+
+        .severity-bar {
+            width: 100%;
+            height: 6px;
+            background: #e0e0e0;
+            border-radius: 3px;
+            margin: 8px 0;
+            overflow: hidden;
+        }
+
+        .severity-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚗 Bump Aware - Road Hazard Map</h1>
+        <p>Field Study Data: Ibadan, Nigeria (January 16, 2026)</p>
+    </div>
+
+    <div class="legend">
+        <h3>Hazard Types</h3>
+        <div class="legend-item">
+            <span class="legend-emoji">🕳️</span>
+            <div class="legend-color" style="background: #FF3B30;"></div>
+            <span class="legend-text">Pothole</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-emoji">🚧</span>
+            <div class="legend-color" style="background: #FF9500;"></div>
+            <span class="legend-text">Speed Hump</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-emoji">⚠️</span>
+            <div class="legend-color" style="background: #FFA500;"></div>
+            <span class="legend-text">Bump</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-emoji">🌊</span>
+            <div class="legend-color" style="background: #8B4513;"></div>
+            <span class="legend-text">Rough Road</span>
+        </div>
+    </div>
+
+    <div class="stats">
+        <h3>Dataset Statistics</h3>
+        <div class="stat-item">
+            <span class="stat-label">Total Hazards:</span>
+            <span class="stat-value" id="total-hazards">0</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Rough Road:</span>
+            <span class="stat-value" id="rough-road-count">0</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Bumps:</span>
+            <span class="stat-value" id="bump-count">0</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Speed Humps:</span>
+            <span class="stat-value" id="speed-hump-count">0</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Avg Severity:</span>
+            <span class="stat-value" id="avg-severity">0.0</span>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script>
+        // Hazard data from API
+        const hazards = [
+            {"latitude": 7.4400008, "longitude": 3.950002, "hazard_type": "rough_road", "severity": 2.74, "confidence": 0.9, "id": 41, "detection_count": 1},
+            {"latitude": 7.4400935, "longitude": 3.9499371, "hazard_type": "rough_road", "severity": 2.45, "confidence": 0.9, "id": 40, "detection_count": 1},
+            {"latitude": 7.4398847, "longitude": 3.9500693, "hazard_type": "rough_road", "severity": 3.02, "confidence": 0.9, "id": 69, "detection_count": 1},
+            {"latitude": 7.4402681, "longitude": 3.9497752, "hazard_type": "rough_road", "severity": 2.21, "confidence": 0.9, "id": 70, "detection_count": 1},
+            {"latitude": 7.4408601, "longitude": 3.9491986, "hazard_type": "rough_road", "severity": 4.24, "confidence": 0.9, "id": 39, "detection_count": 1},
+            {"latitude": 7.44068, "longitude": 3.9510559, "hazard_type": "bump", "severity": 2.35, "confidence": 0.9, "id": 42, "detection_count": 1},
+            {"latitude": 7.4381445, "longitude": 3.9485578, "hazard_type": "bump", "severity": 2.49, "confidence": 0.9, "id": 68, "detection_count": 1},
+            {"latitude": 7.4377567, "longitude": 3.9481883, "hazard_type": "bump", "severity": 2.66, "confidence": 0.9, "id": 43, "detection_count": 1},
+            {"latitude": 7.4372185, "longitude": 3.9473743, "hazard_type": "rough_road", "severity": 2.5, "confidence": 0.9, "id": 67, "detection_count": 1},
+            {"latitude": 7.4361086, "longitude": 3.946009, "hazard_type": "bump", "severity": 2.55, "confidence": 0.9, "id": 66, "detection_count": 1},
+            {"latitude": 7.4358501, "longitude": 3.9457742, "hazard_type": "rough_road", "severity": 2.69, "confidence": 0.9, "id": 44, "detection_count": 1},
+            {"latitude": 7.4356544, "longitude": 3.9455256, "hazard_type": "bump", "severity": 2.78, "confidence": 0.9, "id": 45, "detection_count": 1},
+            {"latitude": 7.434521, "longitude": 3.9439855, "hazard_type": "bump", "severity": 2.41, "confidence": 0.9, "id": 65, "detection_count": 1},
+            {"latitude": 7.434165, "longitude": 3.9435498, "hazard_type": "rough_road", "severity": 3.44, "confidence": 0.9, "id": 64, "detection_count": 1},
+            {"latitude": 7.4298732, "longitude": 3.9400395, "hazard_type": "bump", "severity": 2.25, "confidence": 0.9, "id": 63, "detection_count": 1},
+            {"latitude": 7.4289741, "longitude": 3.9395969, "hazard_type": "rough_road", "severity": 3.17, "confidence": 0.9, "id": 46, "detection_count": 1},
+            {"latitude": 7.4286387, "longitude": 3.9393334, "hazard_type": "rough_road", "severity": 2.72, "confidence": 0.9, "id": 62, "detection_count": 1},
+            {"latitude": 7.4280907, "longitude": 3.9389999, "hazard_type": "rough_road", "severity": 2.41, "confidence": 0.9, "id": 61, "detection_count": 1},
+            {"latitude": 7.4279136, "longitude": 3.9389904, "hazard_type": "speed_hump", "severity": 2.67, "confidence": 0.9, "id": 47, "detection_count": 1},
+            {"latitude": 7.4264807, "longitude": 3.9382193, "hazard_type": "speed_hump", "severity": 3.15, "confidence": 0.9, "id": 48, "detection_count": 1},
+            {"latitude": 7.4256214, "longitude": 3.9378636, "hazard_type": "rough_road", "severity": 2.75, "confidence": 0.9, "id": 60, "detection_count": 1},
+            {"latitude": 7.425079, "longitude": 3.9377262, "hazard_type": "rough_road", "severity": 2.87, "confidence": 0.9, "id": 59, "detection_count": 1},
+            {"latitude": 7.4241279, "longitude": 3.9373953, "hazard_type": "rough_road", "severity": 3.11, "confidence": 0.9, "id": 58, "detection_count": 1},
+            {"latitude": 7.4234741, "longitude": 3.9370598, "hazard_type": "rough_road", "severity": 2.33, "confidence": 0.9, "id": 49, "detection_count": 1},
+            {"latitude": 7.423448, "longitude": 3.9368365, "hazard_type": "speed_hump", "severity": 3.13, "confidence": 0.9, "id": 57, "detection_count": 1},
+            {"latitude": 7.423278, "longitude": 3.9365858, "hazard_type": "speed_hump", "severity": 3.05, "confidence": 0.9, "id": 56, "detection_count": 1},
+            {"latitude": 7.4231596, "longitude": 3.9364138, "hazard_type": "speed_hump", "severity": 3.58, "confidence": 0.9, "id": 55, "detection_count": 1},
+            {"latitude": 7.4231047, "longitude": 3.9363364, "hazard_type": "speed_hump", "severity": 2.91, "confidence": 0.9, "id": 54, "detection_count": 1},
+            {"latitude": 7.422932, "longitude": 3.9363399, "hazard_type": "rough_road", "severity": 2.87, "confidence": 0.9, "id": 50, "detection_count": 1},
+            {"latitude": 7.4205198, "longitude": 3.9352243, "hazard_type": "rough_road", "severity": 2.27, "confidence": 0.9, "id": 51, "detection_count": 1},
+            {"latitude": 7.4194328, "longitude": 3.9343313, "hazard_type": "bump", "severity": 2.39, "confidence": 0.9, "id": 53, "detection_count": 1},
+            {"latitude": 7.4189993, "longitude": 3.9340148, "hazard_type": "bump", "severity": 2.41, "confidence": 0.9, "id": 52, "detection_count": 1}
+        ];
+
+        // Helper functions matching mobile app
+        function getHazardColor(hazardType, severity) {
+            switch (hazardType.toLowerCase()) {
+                case 'pothole':
+                    return severity >= 5 ? '#FF3B30' : '#FF6B6B';
+                case 'speed_hump':
+                    return severity >= 5 ? '#FF9500' : '#FFB340';
+                case 'bump':
+                    return severity >= 5 ? '#FFA500' : '#FFC470';
+                case 'rough_road':
+                    return severity >= 5 ? '#8B4513' : '#A0522D';
+                default:
+                    return '#999999';
+            }
+        }
+
+        function getHazardEmoji(hazardType) {
+            switch (hazardType.toLowerCase()) {
+                case 'pothole':
+                    return '🕳️';
+                case 'speed_hump':
+                    return '🚧';
+                case 'bump':
+                    return '⚠️';
+                case 'rough_road':
+                    return '🌊';
+                default:
+                    return '❓';
+            }
+        }
+
+        function getHazardDisplayName(hazardType) {
+            switch (hazardType.toLowerCase()) {
+                case 'pothole':
+                    return 'Pothole';
+                case 'speed_hump':
+                    return 'Speed Hump';
+                case 'bump':
+                    return 'Bump';
+                case 'rough_road':
+                    return 'Rough Road';
+                default:
+                    return 'Unknown Hazard';
+            }
+        }
+
+        // Calculate statistics
+        function updateStats() {
+            const roughRoadCount = hazards.filter(h => h.hazard_type === 'rough_road').length;
+            const bumpCount = hazards.filter(h => h.hazard_type === 'bump').length;
+            const speedHumpCount = hazards.filter(h => h.hazard_type === 'speed_hump').length;
+            const avgSeverity = (hazards.reduce((sum, h) => sum + h.severity, 0) / hazards.length).toFixed(2);
+
+            document.getElementById('total-hazards').textContent = hazards.length;
+            document.getElementById('rough-road-count').textContent = roughRoadCount;
+            document.getElementById('bump-count').textContent = bumpCount;
+            document.getElementById('speed-hump-count').textContent = speedHumpCount;
+            document.getElementById('avg-severity').textContent = avgSeverity;
+        }
+
+        // Initialize map
+        function initMap() {
+            // Calculate center of all hazards
+            const centerLat = hazards.reduce((sum, h) => sum + h.latitude, 0) / hazards.length;
+            const centerLon = hazards.reduce((sum, h) => sum + h.longitude, 0) / hazards.length;
+
+            const map = new google.maps.Map(document.getElementById('map'), {
+                zoom: 14,
+                center: { lat: centerLat, lng: centerLon },
+                mapTypeId: 'roadmap',
+                styles: [
+                    {
+                        featureType: 'poi',
+                        elementType: 'labels',
+                        stylers: [{ visibility: 'off' }]
+                    }
+                ]
+            });
+
+            // Add markers for each hazard
+            hazards.forEach(hazard => {
+                const color = getHazardColor(hazard.hazard_type, hazard.severity);
+                const emoji = getHazardEmoji(hazard.hazard_type);
+                const displayName = getHazardDisplayName(hazard.hazard_type);
+
+                // Create custom marker icon with emoji
+                const marker = new google.maps.Marker({
+                    position: { lat: hazard.latitude, lng: hazard.longitude },
+                    map: map,
+                    icon: {
+                        path: google.maps.SymbolPath.CIRCLE,
+                        scale: 10,
+                        fillColor: color,
+                        fillOpacity: 0.9,
+                        strokeColor: '#FFFFFF',
+                        strokeWeight: 2
+                    },
+                    title: `${emoji} ${displayName}`
+                });
+
+                // Add circle around marker
+                new google.maps.Circle({
+                    map: map,
+                    center: { lat: hazard.latitude, lng: hazard.longitude },
+                    radius: 15,
+                    fillColor: color,
+                    fillOpacity: 0.2,
+                    strokeColor: color,
+                    strokeWeight: 2
+                });
+
+                // Create info window
+                const severityPercent = (hazard.severity / 10 * 100).toFixed(0);
+                const infoContent = `
+                    <div class="info-window-content">
+                        <div class="info-title">${emoji} ${displayName}</div>
+                        <div class="info-detail"><strong>Severity:</strong> ${hazard.severity.toFixed(1)}/10</div>
+                        <div class="severity-bar">
+                            <div class="severity-fill" style="width: ${severityPercent}%; background: ${color};"></div>
+                        </div>
+                        <div class="info-detail"><strong>Confidence:</strong> ${(hazard.confidence * 100).toFixed(0)}%</div>
+                        <div class="info-detail"><strong>Detections:</strong> ${hazard.detection_count}</div>
+                        <div class="info-detail"><strong>Location:</strong> ${hazard.latitude.toFixed(6)}, ${hazard.longitude.toFixed(6)}</div>
+                        <div class="info-detail"><strong>ID:</strong> #${hazard.id}</div>
+                    </div>
+                `;
+
+                const infoWindow = new google.maps.InfoWindow({
+                    content: infoContent
+                });
+
+                marker.addListener('click', () => {
+                    infoWindow.open(map, marker);
+                });
+            });
+
+            // Update statistics
+            updateStats();
+        }
+
+        // Load Google Maps API
+        window.initMap = initMap;
+    </script>
+
+    <!-- Replace YOUR_API_KEY with your actual Google Maps API key -->
+    <script async defer
+        src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=initMap">
+    </script>
+</body>
+</html>
