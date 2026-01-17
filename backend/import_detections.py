@@ -18,8 +18,9 @@ from typing import List, Dict, Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from geoalchemy2.elements import WKTElement
 
-from app.db.base import get_async_session
+from app.db.base import AsyncSessionLocal
 from app.db.models import User, Detection
 from app.core.config import settings
 
@@ -79,7 +80,7 @@ async def import_detections_from_file(file_path: Path, user_email: str) -> Dict[
     print(f"Exported at: {data.get('exported_at', 'unknown')}\n")
 
     # Import to database
-    async for session in get_async_session():
+    async with AsyncSessionLocal() as session:
         try:
             # Find or create user
             user = await find_or_create_user(session, user_email)
@@ -99,16 +100,31 @@ async def import_detections_from_file(file_path: Path, user_email: str) -> Dict[
                         skipped_count += 1
                         continue
 
+                    # Get sensor data
+                    accel = det_data.get('accelerometer', {})
+                    gyro = det_data.get('gyroscope', {})
+
+                    # Create WKT point for PostGIS
+                    point = f"POINT({det_data['longitude']} {det_data['latitude']})"
+
                     # Create detection
                     detection = Detection(
                         user_id=user.id,
+                        location=WKTElement(point, srid=4326),
                         latitude=det_data['latitude'],
                         longitude=det_data['longitude'],
                         accuracy=det_data.get('accuracy', 5.0),
                         magnitude=det_data['magnitude'],
                         timestamp=datetime.fromtimestamp(det_data['timestamp'] / 1000),  # Convert ms to seconds
-                        accelerometer_data=det_data.get('accelerometer', {}),
-                        gyroscope_data=det_data.get('gyroscope', {}),
+                        accelerometer_x=accel.get('x', 0.0),
+                        accelerometer_y=accel.get('y', 0.0),
+                        accelerometer_z=accel.get('z', 0.0),
+                        accelerometer_timestamp=datetime.fromtimestamp(accel.get('timestamp', det_data['timestamp']) / 1000),
+                        gyroscope_x=gyro.get('x', 0.0),
+                        gyroscope_y=gyro.get('y', 0.0),
+                        gyroscope_z=gyro.get('z', 0.0),
+                        gyroscope_timestamp=datetime.fromtimestamp(gyro.get('timestamp', det_data['timestamp']) / 1000),
+                        confirmed_type=det_data.get('confirmed_type'),
                     )
 
                     session.add(detection)

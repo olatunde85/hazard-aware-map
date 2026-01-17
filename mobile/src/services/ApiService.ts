@@ -74,6 +74,7 @@ export class ApiService {
         z: d.gyroscopeData.z,
         timestamp: d.gyroscopeData.timestamp,
       },
+      confirmed_type: d.confirmedType || null,
     }));
 
     await this.api.post('/detections/batch', {detections: payload});
