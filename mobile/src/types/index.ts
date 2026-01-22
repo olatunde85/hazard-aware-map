@@ -71,3 +71,32 @@ export interface DetectionStatistics {
   pendingUploads: number;
   lastSyncTime: number | null;
 }
+
+// Route-aware navigation interfaces
+export interface RouteProgress {
+  currentSegmentIndex: number;      // Which route segment user is on
+  distanceAlongRoute: number;       // Total meters from trip start
+  distanceToRouteEnd: number;       // Meters remaining to destination
+  percentComplete: number;          // 0-100%
+  snappedLocation: Location;        // User position snapped to route
+  isOffRoute: boolean;              // True if >75m from route
+  bearing: number;                  // Direction of travel (0-360°)
+}
+
+export interface SegmentCache {
+  segmentLengths: number[];         // Pre-calculated length of each segment
+  cumulativeDistances: number[];    // Distance from start to each point
+  totalLength: number;              // Total route distance
+}
+
+export interface RouteHazard extends Hazard {
+  routeDistance: number;            // Distance from trip start along route
+  segmentIndex: number;             // Which route segment hazard is on
+  snappedLocation: Location;        // Hazard projected onto route
+  distanceFromRoute: number;        // Perpendicular distance to route
+}
+
+export interface Location {
+  latitude: number;
+  longitude: number;
+}
