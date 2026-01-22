@@ -10,6 +10,8 @@ import {
   Linking,
   FlatList,
   Modal,
+  Share,
+  ScrollView,
 } from 'react-native';
 import MapView, {Marker, Circle, PROVIDER_GOOGLE, Polyline} from 'react-native-maps';
 import {useIsFocused} from '@react-navigation/native';
@@ -19,7 +21,8 @@ import {ApiService} from '@services/ApiService';
 import {MapsConfigService} from '@services/MapsConfigService';
 import {TripService, type Location as TripLocation} from '@services/TripService';
 import {RecentSearchesService, type RecentSearch} from '@services/RecentSearchesService';
-import type {Hazard} from '../types';
+import {NavigationBar} from '@components/NavigationBar';
+import type {Hazard, RouteProgress, RouteHazard} from '../types';
 
 export function MapScreen(): React.JSX.Element {
   const [hazards, setHazards] = useState<Hazard[]>([]);
@@ -47,6 +50,29 @@ export function MapScreen(): React.JSX.Element {
   const [selectedPlaceName, setSelectedPlaceName] = useState('');
   const recentSearchesService = RecentSearchesService.getInstance();
   const searchInputRef = useRef<any>(null);
+
+  // Trip state
+  const [passedHazardIds, setPassedHazardIds] = useState<Set<string>>(new Set());
+  const [isVoiceMuted, setIsVoiceMuted] = useState(false);
+
+  // Route progress state (NEW)
+  const [routeProgress, setRouteProgress] = useState<RouteProgress | null>(null);
+  const [nextHazard, setNextHazard] = useState<{
+    hazard: RouteHazard;
+    routeDistance: number;
+  } | null>(null);
+  const [currentNavStep, setCurrentNavStep] = useState<{
+    instruction: string;
+    distance: number;
+    roadName?: string;
+  } | null>(null);
+
+  // Hazard summary modal state
+  const [hazardSummaryVisible, setHazardSummaryVisible] = useState(false);
+  const [routeHazardsSummary, setRouteHazardsSummary] = useState<RouteHazard[]>([]);
+  const [startLocationName, setStartLocationName] = useState<string>('');
+  const [summaryStartLocation, setSummaryStartLocation] = useState<TripLocation | null>(null);
+  const [summaryDestination, setSummaryDestination] = useState<TripLocation | null>(null);
 
   useEffect(() => {
     initializeMap();
@@ -384,16 +410,16 @@ export function MapScreen(): React.JSX.Element {
     // Ask user if they want to open Google Maps
     Alert.alert(
       'Start Trip',
-      'Do you want to open Google Maps for navigation?',
+      'Choose a Navigation Option. App will provide both hazard alerts and turn-by-turn navigation. However, for best navigation experience, you can also open Google Maps alongside this app.',
       [
         {
-          text: 'No, Just Alert',
+          text: 'Stay in App',
           onPress: async () => {
             await startTripMonitoring();
           },
         },
         {
-          text: 'Yes, Open Maps',
+          text: 'Open Google Maps',
           onPress: async () => {
             await startTripMonitoring();
             // Small delay to let alert dismiss
@@ -406,42 +432,156 @@ export function MapScreen(): React.JSX.Element {
     );
   };
 
-  const startTripMonitoring = async () => {
-    try {
-      await tripService.startTrip(
-        destination!,
-        userLocation!,
-        (hazard, distance) => {
-          // Hazard alert callback
-          const emoji = tripService.getHazardEmoji(hazard.hazardType);
-          const severityText = tripService.getSeverityText(hazard.severity);
-          const distanceText = tripService.formatDistance(distance);
+const startTripMonitoring = async () => {
+  try {
+    await tripService.startTrip(
+      destination!,
+      userLocation!,
+      (hazard, distance) => {
+        // Voice alert callback (TTS only)
+        console.log(`Hazard alert: ${hazard.hazardType} at ${Math.round(distance)}m`);
+      },
+    );
 
-          Alert.alert(
-            `${emoji} Hazard Ahead!`,
-            `${severityText} ${hazard.hazardType} in ${distanceText}\n\nSeverity: ${hazard.severity.toFixed(1)}/10\nConfidence: ${(hazard.confidence * 100).toFixed(0)}%`,
-            [{text: 'OK'}],
-          );
-        },
+    setIsTripActive(true);
+    Alert.alert('Trip Started', 'You will be alerted about hazards ahead.');
+
+    const statsInterval = setInterval(() => {
+      const state = tripService.getTripState();
+
+      setTripStats({
+        distanceTraveled: state.distanceTraveled,
+        hazardsAvoided: state.hazardsAvoided,
+      });
+
+      // Get route progress (NEW)
+      const progress = tripService.getRouteProgress();
+      if (progress) {
+        setRouteProgress(progress);
+      }
+
+      // Get current navigation step
+      const navStep = tripService.getCurrentNavigationStep();
+      const distanceToStep = tripService.getDistanceToNextStep();
+      if (navStep && distanceToStep !== null) {
+        setCurrentNavStep({
+          instruction: navStep.instruction,
+          distance: distanceToStep,
+          roadName: navStep.roadName,
+        });
+      } else {
+        setCurrentNavStep(null);
+      }
+
+      if (!userLocation) return;
+
+      // Get next hazard (route-aware)
+      const excludeIds = new Set([...passedHazardIds]);
+      const next = tripService.getNextHazardOnRoute(excludeIds);
+      setNextHazard(next);
+
+      // Mark hazard as passed when within 10m
+      if (next && next.routeDistance <= 10) {
+        console.log(`Passed hazard ${next.hazard.id}`);
+        setPassedHazardIds(prev => new Set([...prev, next.hazard.id]));
+      }
+    }, 1000);
+
+    (tripService as any).statsInterval = statsInterval;
+  } catch (error) {
+    console.error('Failed to start trip:', error);
+    Alert.alert('Error', 'Failed to start trip. Please try again.');
+  }
+};
+
+
+  const handleMuteToggle = () => {
+    const newMuteState = !isVoiceMuted;
+    setIsVoiceMuted(newMuteState);
+    tripService.setVoiceAlertsEnabled(!newMuteState);
+  };
+
+  const getLocationName = async (lat: number, lng: number): Promise<string | null> => {
+    try {
+      if (!googleMapsApiKey) return null;
+
+      const response = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${googleMapsApiKey}`
+      );
+      const data = await response.json();
+
+      if (data.results && data.results.length > 0) {
+        return data.results[0].formatted_address;
+      }
+      return null;
+    } catch (error) {
+      console.error('Error getting location name:', error);
+      return null;
+    }
+  };
+
+  const handleViewHazardSummary = async () => {
+    if (!destination) {
+      Alert.alert('No Destination', 'Please select a destination first.');
+      return;
+    }
+
+    if (!userLocation) {
+      Alert.alert('Location Error', 'Unable to get your current location.');
+      return;
+    }
+
+    try {
+      // Get start location name via reverse geocoding
+      const startName = await getLocationName(userLocation.latitude, userLocation.longitude);
+      setStartLocationName(startName || 'Current Location');
+
+      // Store locations for coordinates
+      setSummaryStartLocation(userLocation);
+      setSummaryDestination(destination);
+
+      // Load route and hazards for summary
+      const hazardsOnRoute = await tripService.loadRouteAndHazardsForSummary(
+        userLocation,
+        destination
       );
 
-      setIsTripActive(true);
-      Alert.alert('Trip Started', 'You will be alerted about hazards ahead.');
+      if (hazardsOnRoute.length === 0) {
+        Alert.alert(
+          'No Hazards',
+          'Great news! No hazards detected on this route.',
+          [
+            {
+              text: 'OK',
+              onPress: () => setHazardSummaryVisible(false),
+            },
+          ]
+        );
+      }
 
-      // Update stats periodically
-      const statsInterval = setInterval(() => {
-        const state = tripService.getTripState();
-        setTripStats({
-          distanceTraveled: state.distanceTraveled,
-          hazardsAvoided: state.hazardsAvoided,
-        });
-      }, 2000);
-
-      // Store interval for cleanup
-      (tripService as any).statsInterval = statsInterval;
+      setRouteHazardsSummary(hazardsOnRoute);
+      setHazardSummaryVisible(true);
     } catch (error) {
-      console.error('Failed to start trip:', error);
-      Alert.alert('Error', 'Failed to start trip. Please try again.');
+      console.error('Error loading hazard summary:', error);
+      Alert.alert('Error', 'Failed to load hazard summary. Please try again.');
+    }
+  };
+
+  const handleShareHazardSummary = async () => {
+    const summaryText = tripService.generateHazardSummaryText(
+      startLocationName || 'Current Location',
+      selectedPlaceName,
+      summaryStartLocation || undefined,
+      summaryDestination || undefined
+    );
+
+    try {
+      await Share.share({
+        message: summaryText,
+        title: 'Route Hazard Summary',
+      });
+    } catch (error) {
+      console.error('Error sharing hazard summary:', error);
     }
   };
 
@@ -467,6 +607,10 @@ export function MapScreen(): React.JSX.Element {
             setDestination(null);
             setSelectedPlaceName('');
             setTripStats({distanceTraveled: 0, hazardsAvoided: 0});
+            setPassedHazardIds(new Set()); // Clear passed hazards
+            setRouteProgress(null); // Clear route progress
+            setNextHazard(null); // Clear next hazard
+            setIsVoiceMuted(false); // Reset mute state
 
             Alert.alert(
               'Trip Completed',
@@ -513,7 +657,7 @@ export function MapScreen(): React.JSX.Element {
           latitudeDelta: 0.0922,
           longitudeDelta: 0.0421,
         }}
-        showsUserLocation
+        showsUserLocation={!isTripActive}
         showsMyLocationButton={false}
         loadingEnabled
         onMapReady={() => {
@@ -560,68 +704,167 @@ export function MapScreen(): React.JSX.Element {
 
         {/* Destination Marker */}
         {destination && (
+          <Marker
+            coordinate={destination}
+            title="Destination"
+            description="Your trip destination"
+            pinColor="#4CAF50"
+          />
+        )}
+
+        {/* Render actual route polyline (route-aware) */}
+        {isTripActive && tripService.getRouteInfo() && routeProgress && (
           <>
-            <Marker
-              coordinate={destination}
-              title="Destination"
-              description="Your trip destination"
-              pinColor="#4CAF50"
+            {/* Full route - blue */}
+            <Polyline
+              coordinates={tripService.getRouteInfo()!.points}
+              strokeColor="#4A90E2"
+              strokeWidth={4}
+              zIndex={1}
             />
-            {userLocation && (
+
+            {/* Traveled portion - green */}
+            <Polyline
+              coordinates={tripService
+                .getRouteInfo()!
+                .points.slice(0, routeProgress.currentSegmentIndex + 1)}
+              strokeColor="#4CAF50"
+              strokeWidth={5}
+              zIndex={2}
+            />
+
+            {/* Current segment - bright blue */}
+            {routeProgress.currentSegmentIndex <
+              tripService.getRouteInfo()!.points.length - 1 && (
               <Polyline
-                coordinates={[userLocation, destination]}
-                strokeColor="#4CAF50"
-                strokeWidth={2}
-                lineDashPattern={[5, 5]}
+                coordinates={[
+                  tripService.getRouteInfo()!.points[
+                    routeProgress.currentSegmentIndex
+                  ],
+                  tripService.getRouteInfo()!.points[
+                    routeProgress.currentSegmentIndex + 1
+                  ],
+                ]}
+                strokeColor="#007AFF"
+                strokeWidth={6}
+                zIndex={3}
               />
             )}
           </>
         )}
+
+        {/* Custom car marker during trip mode */}
+        {isTripActive && userLocation && routeProgress && (
+          <Marker
+            coordinate={userLocation}
+            anchor={{x: 0.5, y: 0.5}}
+            rotation={routeProgress.bearing}
+            flat={true}>
+            <View style={styles.carMarker}>
+              <Text style={styles.carIcon}>🚗</Text>
+            </View>
+          </Marker>
+        )}
       </MapView>
 
-      {/* Stats Overlay - Only show when trip is active */}
+      {/* NavigationBar - subtle hazard warnings only */}
       {!searchModalVisible && isTripActive && (
-        <View style={styles.statsOverlay}>
-          <Text style={styles.statsText}>🚗 Trip Active</Text>
-          <Text style={styles.tripStatsText}>
-            {tripService.formatDistance(tripStats.distanceTraveled)} • {tripStats.hazardsAvoided} hazards avoided
-          </Text>
+        <NavigationBar nextHazard={nextHazard} />
+      )}
+
+      {/* Right side controls - stacked vertically */}
+      <View style={styles.rightControls}>
+        {isTripActive && (
+          <TouchableOpacity
+            style={styles.tripControlButton}
+            onPress={handleMuteToggle}>
+            <Text style={styles.tripControlIcon}>
+              {isVoiceMuted ? '🔇' : '🔊'}
+            </Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity style={styles.centerButton} onPress={centerOnUser}>
+          <Text style={styles.centerButtonText}>📍</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.refreshButton} onPress={fetchHazards}>
+          <Text style={styles.refreshButtonText}>🔄</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Trip Info Bar - bottom, full width with ETA and stop button */}
+      {!searchModalVisible && isTripActive && routeProgress && (
+        <View style={styles.tripControlsOverlay}>
+          <View style={styles.tripInfoContent}>
+            <View style={styles.tripInfoColumn}>
+              <Text style={styles.tripEtaText}>
+                {(() => {
+                  const remainingMinutes = Math.round(((routeProgress.distanceToRouteEnd / 1000) / 40) * 60);
+                  const now = new Date();
+                  const arrival = new Date(now.getTime() + remainingMinutes * 60000);
+                  return arrival.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+                })()}
+              </Text>
+              <Text style={styles.tripSubText}>Estimated Arrival</Text>
+            </View>
+            <View style={styles.tripInfoColumn}>
+              <Text style={styles.tripDistanceText}>
+                {tripService.formatDistance(routeProgress.distanceToRouteEnd)}
+              </Text>
+              <Text style={styles.tripSubText}>
+                {Math.round(((routeProgress.distanceToRouteEnd / 1000) / 40) * 60) < 1
+                  ? '<1 min'
+                  : `~${Math.round(((routeProgress.distanceToRouteEnd / 1000) / 40) * 60)} min`}
+              </Text>
+            </View>
+          </View>
+          <TouchableOpacity
+            style={styles.stopTripButton}
+            onPress={handleStopTrip}>
+            <Text style={styles.stopTripText}>END</Text>
+          </TouchableOpacity>
         </View>
       )}
 
-      <TouchableOpacity style={styles.centerButton} onPress={centerOnUser}>
-        <Text style={styles.centerButtonText}>📍</Text>
-      </TouchableOpacity>
 
-      <TouchableOpacity style={styles.refreshButton} onPress={fetchHazards}>
-        <Text style={styles.refreshButtonText}>🔄</Text>
-      </TouchableOpacity>
-
-      {/* Legend */}
-      {!searchModalVisible && (
-        <View style={styles.legend}>
-          <Text style={styles.legendTitle}>Hazard Types</Text>
-          <View style={styles.legendItem}>
-            <Text style={styles.legendEmoji}>{getHazardEmoji('pothole')}</Text>
-            <Text style={styles.legendText}>Pothole</Text>
-          </View>
-          <View style={styles.legendItem}>
-            <Text style={styles.legendEmoji}>{getHazardEmoji('speed_hump')}</Text>
-            <Text style={styles.legendText}>Speed Hump</Text>
-          </View>
-          <View style={styles.legendItem}>
-            <Text style={styles.legendEmoji}>{getHazardEmoji('bump')}</Text>
-            <Text style={styles.legendText}>Bump</Text>
-          </View>
-          <View style={styles.legendItem}>
-            <Text style={styles.legendEmoji}>{getHazardEmoji('rough_road')}</Text>
-            <Text style={styles.legendText}>Rough Road</Text>
+      {/* Trip Destination Banner - shown during active trip */}
+      {!searchModalVisible && isTripActive && selectedPlaceName && (
+        <View style={styles.tripDestinationBanner}>
+          <View style={styles.destinationContent}>
+            <Text style={styles.destinationIcon}>
+              {currentNavStep ? '🧭' : '🎯'}
+            </Text>
+            <View style={styles.destinationTextContainer}>
+              {currentNavStep ? (
+                <>
+                  <Text style={styles.destinationLabel}>
+                    In {tripService.formatDistance(currentNavStep.distance)}
+                  </Text>
+                  <Text style={styles.destinationName} numberOfLines={1}>
+                    {currentNavStep.instruction
+                      .replace(/<b>/g, '')
+                      .replace(/<\/b>/g, '')
+                      .replace(/<div[^>]*>/g, ' ')
+                      .replace(/<\/div>/g, '')
+                      .replace(/&nbsp;/g, ' ')
+                      .replace(/\s+/g, ' ')
+                      .trim()}
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.destinationLabel}>Navigating to</Text>
+                  <Text style={styles.destinationName} numberOfLines={1}>
+                    {selectedPlaceName}
+                  </Text>
+                </>
+              )}
+            </View>
           </View>
         </View>
       )}
 
-      {/* Compact Search Bar - Tappable */}
-      {!searchModalVisible && (
+      {/* Compact Search Bar - only shown when trip is NOT active */}
+      {!searchModalVisible && !isTripActive && (
         <View style={styles.compactSearchBar}>
           <TouchableOpacity
             style={styles.compactSearchInput}
@@ -735,28 +978,154 @@ export function MapScreen(): React.JSX.Element {
         </View>
       </Modal>
 
-      {/* Trip Control Buttons */}
-      {!searchModalVisible && (
+      {/* Trip Control Buttons - only when not in trip mode */}
+      {!searchModalVisible && !isTripActive && destination && (
         <View style={styles.tripControlsContainer}>
-          {!isTripActive ? (
-            <>
-              {destination && (
-                <TouchableOpacity
-                  style={[styles.tripButton, styles.startTripButton]}
-                  onPress={handleStartTrip}>
-                  <Text style={styles.tripButtonText}>🚗 Start Trip</Text>
-                </TouchableOpacity>
-              )}
-            </>
-          ) : (
-            <TouchableOpacity
-              style={[styles.tripButton, styles.stopTripButton]}
-              onPress={handleStopTrip}>
-              <Text style={styles.tripButtonText}>⏹️ Stop Trip</Text>
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity
+            style={[styles.tripButton, styles.startTripButton]}
+            onPress={handleStartTrip}>
+            <Text style={styles.tripButtonText}>Start Trip</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tripButton, styles.secondaryTripButton]}
+            onPress={handleViewHazardSummary}>
+            <Text style={styles.tripButtonText}>View Hazard Summary</Text>
+          </TouchableOpacity>
         </View>
       )}
+
+      {/* Hazard Summary Modal */}
+      <Modal
+        visible={hazardSummaryVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setHazardSummaryVisible(false)}>
+        <View style={styles.summaryModalContainer}>
+          {/* Header */}
+          <View style={styles.summaryHeader}>
+            <Text style={styles.summaryTitle}>Route Hazard Summary</Text>
+            <TouchableOpacity
+              onPress={() => setHazardSummaryVisible(false)}
+              style={styles.closeButton}>
+              <Text style={styles.closeButtonText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Scrollable Content */}
+          <ScrollView style={styles.summaryScrollContainer} contentContainerStyle={styles.summaryScrollContent}>
+            {/* Route Info */}
+            <View style={styles.summaryDestination}>
+            <View style={styles.summaryLocationRow}>
+              <Text style={styles.summaryDestinationLabel}>From:</Text>
+              <Text style={styles.summaryDestinationName}>
+                {startLocationName || 'Current Location'}
+                {summaryStartLocation && (
+                  <Text style={styles.summaryCoordinates}>
+                    {'\n'}({summaryStartLocation.latitude.toFixed(6)}, {summaryStartLocation.longitude.toFixed(6)})
+                  </Text>
+                )}
+              </Text>
+            </View>
+            <View style={styles.summaryLocationRow}>
+              <Text style={styles.summaryDestinationLabel}>To:</Text>
+              <Text style={styles.summaryDestinationName}>
+                {selectedPlaceName}
+                {summaryDestination && (
+                  <Text style={styles.summaryCoordinates}>
+                    {'\n'}({summaryDestination.latitude.toFixed(6)}, {summaryDestination.longitude.toFixed(6)})
+                  </Text>
+                )}
+              </Text>
+            </View>
+          </View>
+
+          {/* Summary Stats */}
+          <View style={styles.summaryStats}>
+            <View style={styles.summaryStatItem}>
+              <Text style={styles.summaryStatValue}>
+                {routeHazardsSummary.length}
+              </Text>
+              <Text style={styles.summaryStatLabel}>Total Hazards</Text>
+            </View>
+            <View style={styles.summaryStatItem}>
+              <Text style={styles.summaryStatValue}>
+                {tripService.getRouteInfo()
+                  ? tripService.formatDistance(tripService.getRouteInfo()!.distance)
+                  : '-'}
+              </Text>
+              <Text style={styles.summaryStatLabel}>Route Distance</Text>
+            </View>
+          </View>
+
+          {/* Hazards by Type */}
+          <View style={styles.summarySection}>
+            <Text style={styles.summarySectionTitle}>Hazards by Type</Text>
+            <View style={styles.hazardTypeList}>
+              {(() => {
+                const typeCount = new Map<string, number>();
+                routeHazardsSummary.forEach(h => {
+                  typeCount.set(h.hazardType, (typeCount.get(h.hazardType) || 0) + 1);
+                });
+                return Array.from(typeCount.entries()).map(([type, count]) => (
+                  <View key={type} style={styles.hazardTypeItem}>
+                    <Text style={styles.hazardTypeEmoji}>
+                      {tripService.getHazardEmoji(type)}
+                    </Text>
+                    <Text style={styles.hazardTypeName}>
+                      {type.replace('_', ' ').toUpperCase()}
+                    </Text>
+                    <Text style={styles.hazardTypeCount}>{count}</Text>
+                  </View>
+                ));
+              })()}
+            </View>
+          </View>
+
+          {/* Detailed Hazard List */}
+          <View style={styles.summarySection}>
+            <Text style={styles.summarySectionTitle}>Detailed List</Text>
+            <View style={styles.hazardDetailList}>
+              {routeHazardsSummary.map((hazard, index) => {
+                const severity = hazard.severity >= 3.5 ? 'High' : hazard.severity >= 2.5 ? 'Medium' : 'Low';
+                const severityColor = hazard.severity >= 3.5 ? '#FF3B30' : hazard.severity >= 2.5 ? '#FF9500' : '#34C759';
+
+                return (
+                  <View key={hazard.id} style={styles.hazardDetailItem}>
+                    <View style={styles.hazardDetailLeft}>
+                      <Text style={styles.hazardDetailNumber}>{index + 1}</Text>
+                      <Text style={styles.hazardDetailEmoji}>
+                        {tripService.getHazardEmoji(hazard.hazardType)}
+                      </Text>
+                      <View>
+                        <Text style={styles.hazardDetailType}>
+                          {hazard.hazardType.replace('_', ' ')}
+                        </Text>
+                        <Text style={styles.hazardDetailDistance}>
+                          {tripService.formatDistance(hazard.routeDistance)} from start
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={[styles.hazardSeverityBadge, {backgroundColor: severityColor}]}>
+                      <Text style={styles.hazardSeverityText}>{severity}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+          </ScrollView>
+
+          {/* Share Button */}
+          <View style={styles.summaryFooter}>
+            <TouchableOpacity
+              style={styles.shareButton}
+              onPress={handleShareHazardSummary}>
+              <Text style={styles.shareButtonText}>📤 Share Summary</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -827,9 +1196,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   centerButton: {
-    position: 'absolute',
-    bottom: 90,
-    right: 20,
     width: 50,
     height: 50,
     borderRadius: 25,
@@ -846,9 +1212,6 @@ const styles = StyleSheet.create({
     fontSize: 24,
   },
   refreshButton: {
-    position: 'absolute',
-    bottom: 150,
-    right: 20,
     width: 50,
     height: 50,
     borderRadius: 25,
@@ -875,12 +1238,13 @@ const styles = StyleSheet.create({
     bottom: 80,
     left: 20,
     right: 90,
-    flexDirection: 'row',
-    gap: 10,
+    flexDirection: 'column',
+    gap: 12,
   },
   tripButton: {
-    flex: 1,
-    paddingVertical: 14,
+    width: '100%',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
     borderRadius: 8,
     alignItems: 'center',
     shadowColor: '#000',
@@ -892,8 +1256,13 @@ const styles = StyleSheet.create({
   startTripButton: {
     backgroundColor: '#4CAF50',
   },
-  stopTripButton: {
-    backgroundColor: '#FF3B30',
+  secondaryTripButton: {
+    backgroundColor: '#007AFF',
+  },
+  muteToggleButton: {
+    backgroundColor: '#FF9500',
+    flex: 0,
+    minWidth: 60,
   },
   tripButtonText: {
     color: '#FFFFFF',
@@ -940,6 +1309,44 @@ const styles = StyleSheet.create({
   legendText: {
     fontSize: 11,
     color: '#333',
+  },
+  // Trip Destination Banner
+  tripDestinationBanner: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 50 : 10,
+    left: 10,
+    right: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  destinationContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  destinationIcon: {
+    fontSize: 24,
+    marginRight: 12,
+  },
+  destinationTextContainer: {
+    flex: 1,
+  },
+  destinationLabel: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 11,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  destinationName: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: 'bold',
   },
   // Compact Search Bar
   compactSearchBar: {
@@ -1119,5 +1526,310 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#666',
     marginTop: 2,
+  },
+  tripControlsOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+  },
+  tripInfoContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 40,
+  },
+  tripInfoColumn: {
+    alignItems: 'center',
+    minWidth: 120,
+  },
+  tripEtaText: {
+    color: '#4CAF50',
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  tripDistanceText: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  tripSubText: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  stopTripButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: '#FF3B30',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  stopTripText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+    letterSpacing: 1,
+  },
+  tripControls: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  rightControls: {
+    position: 'absolute',
+    bottom: 80,
+    right: 20,
+    flexDirection: 'column',
+    gap: 10,
+  },
+  tripControlButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  stopTripControl: {
+    backgroundColor: 'rgba(255, 59, 48, 0.9)',
+  },
+  tripControlIcon: {
+    fontSize: 22,
+  },
+  carMarker: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  carIcon: {
+    fontSize: 32,
+  },
+  // Hazard Summary Modal Styles
+  summaryModalContainer: {
+    flex: 1,
+    backgroundColor: '#F5F5F5',
+  },
+  summaryScrollContainer: {
+    flex: 1,
+  },
+  summaryScrollContent: {
+    paddingBottom: 20,
+  },
+  summaryHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+    ...Platform.select({
+      ios: {
+        paddingTop: 60,
+      },
+      android: {
+        paddingTop: 20,
+      },
+    }),
+  },
+  summaryTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  closeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F0F0F0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeButtonText: {
+    fontSize: 20,
+    color: '#666',
+  },
+  summaryDestination: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  summaryLocationRow: {
+    marginBottom: 8,
+  },
+  summaryDestinationLabel: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 4,
+    fontWeight: '600',
+  },
+  summaryDestinationName: {
+    fontSize: 15,
+    color: '#333',
+  },
+  summaryCoordinates: {
+    fontSize: 12,
+    color: '#999',
+    fontWeight: 'normal',
+  },
+  summaryStats: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 20,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+    gap: 40,
+    justifyContent: 'center',
+  },
+  summaryStatItem: {
+    alignItems: 'center',
+  },
+  summaryStatValue: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#FF3B30',
+    marginBottom: 4,
+  },
+  summaryStatLabel: {
+    fontSize: 12,
+    color: '#666',
+  },
+  summarySection: {
+    backgroundColor: '#FFFFFF',
+    marginTop: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+  },
+  summarySectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 12,
+  },
+  hazardTypeList: {
+    gap: 12,
+  },
+  hazardTypeItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F8F8',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  hazardTypeEmoji: {
+    fontSize: 24,
+    marginRight: 12,
+  },
+  hazardTypeName: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  hazardTypeCount: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#007AFF',
+  },
+  hazardDetailList: {
+    marginTop: 8,
+  },
+  hazardDetailItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#F8F8F8',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  hazardDetailLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 12,
+  },
+  hazardDetailNumber: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#666',
+    minWidth: 24,
+  },
+  hazardDetailEmoji: {
+    fontSize: 24,
+  },
+  hazardDetailType: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    textTransform: 'capitalize',
+  },
+  hazardDetailDistance: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 2,
+  },
+  hazardSeverityBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  hazardSeverityText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  summaryFooter: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
+    ...Platform.select({
+      ios: {
+        paddingBottom: 34,
+      },
+    }),
+  },
+  shareButton: {
+    backgroundColor: '#007AFF',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  shareButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });

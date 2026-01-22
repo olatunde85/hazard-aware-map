@@ -47,7 +47,7 @@ export function SettingsScreen({onClose}: SettingsScreenProps = {}): React.JSX.E
   const loadSettings = async () => {
     try {
       const savedUrl = await AsyncStorage.getItem(API_URL_KEY);
-      const currentUrl = savedUrl || 'http://192.168.0.142/api/v1';
+      const currentUrl = savedUrl || 'https://c45d933125f2.ngrok-free.app/api/v1';
       setApiUrl(currentUrl);
       setCustomUrl(currentUrl);
 
@@ -255,7 +255,7 @@ export function SettingsScreen({onClose}: SettingsScreenProps = {}): React.JSX.E
             • Physical Device (same WiFi): http://YOUR_MAC_IP:8080/api/v1
           </Text>
           <Text style={styles.infoText}>
-            • Cloud Production: https://bump-api.resoluttech.ltd/api/v1
+            • Public(josh's computer): https://c45d933125f2.ngrok-free.app/api/v1
           </Text>
         </View>
       </ScrollView>
