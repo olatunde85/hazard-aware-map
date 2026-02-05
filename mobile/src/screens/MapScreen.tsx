@@ -13,7 +13,7 @@ import {
   Share,
   ScrollView,
 } from 'react-native';
-import MapView, {Marker, Circle, PROVIDER_GOOGLE, Polyline} from 'react-native-maps';
+import MapView, {Marker, Circle, PROVIDER_GOOGLE} from 'react-native-maps';
 import {useIsFocused} from '@react-navigation/native';
 import {GooglePlacesAutocomplete} from 'react-native-google-places-autocomplete';
 import {LocationService} from '@services/LocationService';
@@ -22,7 +22,91 @@ import {MapsConfigService} from '@services/MapsConfigService';
 import {TripService, type Location as TripLocation} from '@services/TripService';
 import {RecentSearchesService, type RecentSearch} from '@services/RecentSearchesService';
 import {NavigationBar} from '@components/NavigationBar';
-import type {Hazard, RouteProgress, RouteHazard} from '../types';
+import {HeadingMarker} from '@components/HeadingMarker';
+import {RoutePolyline} from '@components/RoutePolyline';
+import type {Hazard, RouteProgress, RouteHazard, NavigationState} from '../types';
+
+// Dark mode map style for navigation
+const darkMapStyle = [
+  {elementType: 'geometry', stylers: [{color: '#242f3e'}]},
+  {elementType: 'labels.text.stroke', stylers: [{color: '#242f3e'}]},
+  {elementType: 'labels.text.fill', stylers: [{color: '#746855'}]},
+  {
+    featureType: 'administrative.locality',
+    elementType: 'labels.text.fill',
+    stylers: [{color: '#d59563'}],
+  },
+  {
+    featureType: 'poi',
+    elementType: 'labels.text.fill',
+    stylers: [{color: '#d59563'}],
+  },
+  {
+    featureType: 'poi.park',
+    elementType: 'geometry',
+    stylers: [{color: '#263c3f'}],
+  },
+  {
+    featureType: 'poi.park',
+    elementType: 'labels.text.fill',
+    stylers: [{color: '#6b9a76'}],
+  },
+  {
+    featureType: 'road',
+    elementType: 'geometry',
+    stylers: [{color: '#38414e'}],
+  },
+  {
+    featureType: 'road',
+    elementType: 'geometry.stroke',
+    stylers: [{color: '#212a37'}],
+  },
+  {
+    featureType: 'road',
+    elementType: 'labels.text.fill',
+    stylers: [{color: '#9ca5b3'}],
+  },
+  {
+    featureType: 'road.highway',
+    elementType: 'geometry',
+    stylers: [{color: '#746855'}],
+  },
+  {
+    featureType: 'road.highway',
+    elementType: 'geometry.stroke',
+    stylers: [{color: '#1f2835'}],
+  },
+  {
+    featureType: 'road.highway',
+    elementType: 'labels.text.fill',
+    stylers: [{color: '#f3d19c'}],
+  },
+  {
+    featureType: 'transit',
+    elementType: 'geometry',
+    stylers: [{color: '#2f3948'}],
+  },
+  {
+    featureType: 'transit.station',
+    elementType: 'labels.text.fill',
+    stylers: [{color: '#d59563'}],
+  },
+  {
+    featureType: 'water',
+    elementType: 'geometry',
+    stylers: [{color: '#17263c'}],
+  },
+  {
+    featureType: 'water',
+    elementType: 'labels.text.fill',
+    stylers: [{color: '#515c6d'}],
+  },
+  {
+    featureType: 'water',
+    elementType: 'labels.text.stroke',
+    stylers: [{color: '#17263c'}],
+  },
+];
 
 export function MapScreen(): React.JSX.Element {
   const [hazards, setHazards] = useState<Hazard[]>([]);
@@ -66,6 +150,12 @@ export function MapScreen(): React.JSX.Element {
     distance: number;
     roadName?: string;
   } | null>(null);
+
+  // Real-time navigation state
+  const [navigationState, setNavigationState] = useState<NavigationState | null>(null);
+  const [isDeviated, setIsDeviated] = useState(false);
+  const [isRerouting, setIsRerouting] = useState(false);
+  const [isFollowingUser, setIsFollowingUser] = useState(true); // Auto-follow camera during nav
 
   // Hazard summary modal state
   const [hazardSummaryVisible, setHazardSummaryVisible] = useState(false);
@@ -249,12 +339,24 @@ export function MapScreen(): React.JSX.Element {
 
   const centerOnUser = () => {
     if (userLocation && mapRef.current) {
-      mapRef.current.animateToRegion({
-        latitude: userLocation.latitude,
-        longitude: userLocation.longitude,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      });
+      if (isTripActive && navigationState && navigationState.smoothedHeading !== null) {
+        // During navigation, re-enable POV mode
+        setIsFollowingUser(true);
+        mapRef.current.animateCamera({
+          center: userLocation,
+          heading: navigationState.smoothedHeading,
+          pitch: 45,
+          zoom: 18,
+        });
+      } else {
+        // Normal centering (north-up)
+        mapRef.current.animateToRegion({
+          latitude: userLocation.latitude,
+          longitude: userLocation.longitude,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        });
+      }
     }
   };
 
@@ -434,6 +536,32 @@ export function MapScreen(): React.JSX.Element {
 
 const startTripMonitoring = async () => {
   try {
+    // Set up navigation state callback for real-time updates
+    tripService.setNavigationUpdateCallback((navState: NavigationState) => {
+      setNavigationState(navState);
+      setIsDeviated(navState.isDeviated);
+
+      // Update user location from navigation state (snapped position)
+      const snappedLocation = {
+        latitude: navState.snappedPosition.latitude,
+        longitude: navState.snappedPosition.longitude,
+      };
+      setUserLocation(snappedLocation);
+
+      // Auto-follow camera with heading rotation (POV mode)
+      if (isFollowingUser && mapRef.current && navState.smoothedHeading !== null) {
+        mapRef.current.animateCamera(
+          {
+            center: snappedLocation,
+            heading: navState.smoothedHeading, // Rotate map to match direction
+            pitch: 45, // Tilt for POV effect
+            zoom: 18, // Street-level zoom
+          },
+          {duration: 300}, // Smooth animation
+        );
+      }
+    });
+
     await tripService.startTrip(
       destination!,
       userLocation!,
@@ -444,6 +572,7 @@ const startTripMonitoring = async () => {
     );
 
     setIsTripActive(true);
+    setIsFollowingUser(true); // Enable follow mode when trip starts
     Alert.alert('Trip Started', 'You will be alerted about hazards ahead.');
 
     const statsInterval = setInterval(() => {
@@ -472,6 +601,9 @@ const startTripMonitoring = async () => {
       } else {
         setCurrentNavStep(null);
       }
+
+      // Check rerouting state
+      setIsRerouting(tripService.isRerouting());
 
       if (!userLocation) return;
 
@@ -611,6 +743,20 @@ const startTripMonitoring = async () => {
             setRouteProgress(null); // Clear route progress
             setNextHazard(null); // Clear next hazard
             setIsVoiceMuted(false); // Reset mute state
+            setNavigationState(null); // Clear navigation state
+            setIsDeviated(false); // Clear deviation state
+            setIsRerouting(false); // Clear rerouting state
+            setIsFollowingUser(true); // Reset follow mode
+
+            // Reset camera to north-up view
+            if (mapRef.current && userLocation) {
+              mapRef.current.animateCamera({
+                center: userLocation,
+                heading: 0,
+                pitch: 0,
+                zoom: 15,
+              });
+            }
 
             Alert.alert(
               'Trip Completed',
@@ -651,6 +797,7 @@ const startTripMonitoring = async () => {
         ref={mapRef}
         provider={PROVIDER_GOOGLE}
         style={styles.map}
+        customMapStyle={isTripActive ? darkMapStyle : undefined}
         initialRegion={{
           latitude: userLocation?.latitude || 37.78825,
           longitude: userLocation?.longitude || -122.4324,
@@ -670,6 +817,12 @@ const startTripMonitoring = async () => {
         onMapLoaded={() => {
           console.log('Map loaded successfully!');
           setMapTilesLoaded(true);
+        }}
+        onPanDrag={() => {
+          // User manually moved the map, disable auto-follow
+          if (isTripActive && isFollowingUser) {
+            setIsFollowingUser(false);
+          }
         }}>
 
         {hazards.map(hazard => {
@@ -712,58 +865,31 @@ const startTripMonitoring = async () => {
           />
         )}
 
-        {/* Render actual route polyline (route-aware) */}
-        {isTripActive && tripService.getRouteInfo() && routeProgress && (
-          <>
-            {/* Full route - blue */}
-            <Polyline
-              coordinates={tripService.getRouteInfo()!.points}
-              strokeColor="#4A90E2"
-              strokeWidth={4}
-              zIndex={1}
-            />
-
-            {/* Traveled portion - green */}
-            <Polyline
-              coordinates={tripService
-                .getRouteInfo()!
-                .points.slice(0, routeProgress.currentSegmentIndex + 1)}
-              strokeColor="#4CAF50"
-              strokeWidth={5}
-              zIndex={2}
-            />
-
-            {/* Current segment - bright blue */}
-            {routeProgress.currentSegmentIndex <
-              tripService.getRouteInfo()!.points.length - 1 && (
-              <Polyline
-                coordinates={[
-                  tripService.getRouteInfo()!.points[
-                    routeProgress.currentSegmentIndex
-                  ],
-                  tripService.getRouteInfo()!.points[
-                    routeProgress.currentSegmentIndex + 1
-                  ],
-                ]}
-                strokeColor="#007AFF"
-                strokeWidth={6}
-                zIndex={3}
-              />
-            )}
-          </>
+        {/* Render actual route polyline with traveled/remaining split */}
+        {isTripActive && tripService.getRouteInfo() && (
+          <RoutePolyline
+            routePoints={tripService.getRouteInfo()!.points}
+            currentSegmentIndex={navigationState?.snappedPosition.segmentIndex ?? 0}
+            progressOnSegment={navigationState?.snappedPosition.parameterT ?? 0}
+            isDeviated={isDeviated}
+          />
         )}
 
-        {/* Custom car marker during trip mode */}
-        {isTripActive && userLocation && routeProgress && (
-          <Marker
-            coordinate={userLocation}
-            anchor={{x: 0.5, y: 0.5}}
-            rotation={routeProgress.bearing}
-            flat={true}>
-            <View style={styles.carMarker}>
-              <Text style={styles.carIcon}>🚗</Text>
-            </View>
-          </Marker>
+        {/* Custom heading marker during trip mode */}
+        {isTripActive && userLocation && (
+          <HeadingMarker
+            coordinate={
+              navigationState
+                ? {
+                    latitude: navigationState.snappedPosition.latitude,
+                    longitude: navigationState.snappedPosition.longitude,
+                  }
+                : userLocation
+            }
+            heading={navigationState?.smoothedHeading ?? null}
+            accuracy={navigationState?.accuracy ?? 20}
+            isOnRoute={!isDeviated}
+          />
         )}
       </MapView>
 
@@ -783,8 +909,15 @@ const startTripMonitoring = async () => {
             </Text>
           </TouchableOpacity>
         )}
-        <TouchableOpacity style={styles.centerButton} onPress={centerOnUser}>
-          <Text style={styles.centerButtonText}>📍</Text>
+        <TouchableOpacity
+          style={[
+            styles.centerButton,
+            isTripActive && !isFollowingUser && styles.centerButtonHighlight,
+          ]}
+          onPress={centerOnUser}>
+          <Text style={styles.centerButtonText}>
+            {isTripActive && !isFollowingUser ? '🧭' : '📍'}
+          </Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.refreshButton} onPress={fetchHazards}>
           <Text style={styles.refreshButtonText}>🔄</Text>
@@ -831,10 +964,26 @@ const startTripMonitoring = async () => {
         <View style={styles.tripDestinationBanner}>
           <View style={styles.destinationContent}>
             <Text style={styles.destinationIcon}>
-              {currentNavStep ? '🧭' : '🎯'}
+              {isRerouting ? '🔄' : isDeviated ? '⚠️' : currentNavStep ? '🧭' : '🎯'}
             </Text>
             <View style={styles.destinationTextContainer}>
-              {currentNavStep ? (
+              {isRerouting ? (
+                <>
+                  <Text style={styles.destinationLabel}>Recalculating...</Text>
+                  <Text style={styles.destinationName} numberOfLines={1}>
+                    Finding new route
+                  </Text>
+                </>
+              ) : isDeviated ? (
+                <>
+                  <Text style={[styles.destinationLabel, {color: '#FF5722'}]}>
+                    Off Route
+                  </Text>
+                  <Text style={styles.destinationName} numberOfLines={1}>
+                    Return to route or wait for reroute
+                  </Text>
+                </>
+              ) : currentNavStep ? (
                 <>
                   <Text style={styles.destinationLabel}>
                     In {tripService.formatDistance(currentNavStep.distance)}
@@ -1210,6 +1359,9 @@ const styles = StyleSheet.create({
   },
   centerButtonText: {
     fontSize: 24,
+  },
+  centerButtonHighlight: {
+    backgroundColor: '#4285F4',
   },
   refreshButton: {
     width: 50,

@@ -2,10 +2,34 @@ import Geolocation from 'react-native-geolocation-service';
 import type {LocationData} from '../types';
 import {PermissionsAndroid, Platform} from 'react-native';
 
+// Location update callback type
+export type LocationUpdateCallback = (location: LocationData) => void;
+
+// Configuration for different tracking modes
+const NAVIGATION_MODE_CONFIG = {
+  enableHighAccuracy: true,
+  distanceFilter: 0, // Update on ANY movement for real-time nav
+  interval: 500, // 500ms interval
+  fastestInterval: 250, // Accept updates as fast as 250ms
+  forceRequestLocation: true,
+  showLocationDialog: true,
+};
+
+const IDLE_MODE_CONFIG = {
+  enableHighAccuracy: true,
+  distanceFilter: 5, // Update every 5 meters
+  interval: 1000, // Update every second
+  fastestInterval: 500,
+  forceRequestLocation: true,
+  showLocationDialog: true,
+};
+
 export class LocationService {
   private static instance: LocationService;
   private watchId: number | null = null;
   private currentLocation: LocationData | null = null;
+  private locationCallbacks: Set<LocationUpdateCallback> = new Set();
+  private isNavigationMode: boolean = false;
 
   private constructor() {}
 
@@ -40,6 +64,11 @@ export class LocationService {
       throw new Error('Location permission denied');
     }
 
+    // Use appropriate config based on mode
+    const config = this.isNavigationMode
+      ? NAVIGATION_MODE_CONFIG
+      : IDLE_MODE_CONFIG;
+
     this.watchId = Geolocation.watchPosition(
       position => {
         this.currentLocation = {
@@ -51,19 +80,65 @@ export class LocationService {
           heading: position.coords.heading,
           timestamp: position.timestamp,
         };
+        // Notify all subscribers
+        this.notifySubscribers(this.currentLocation);
       },
       error => {
         console.error('Location error:', error);
       },
-      {
-        enableHighAccuracy: true,
-        distanceFilter: 5, // Update every 5 meters
-        interval: 1000, // Update every second
-        fastestInterval: 500,
-        forceRequestLocation: true,
-        showLocationDialog: true,
-      },
+      config,
     );
+  }
+
+  /**
+   * Switch to navigation mode with faster updates (500ms interval, 0 distance filter)
+   */
+  public async enableNavigationMode(): Promise<void> {
+    if (this.isNavigationMode && this.watchId !== null) {
+      return;
+    }
+    this.isNavigationMode = true;
+    // Stop existing tracking if any
+    if (this.watchId !== null) {
+      this.stopTracking();
+    }
+    // Always start tracking in navigation mode
+    await this.startTracking();
+  }
+
+  /**
+   * Switch back to idle mode with battery-saving settings
+   */
+  public async disableNavigationMode(): Promise<void> {
+    if (!this.isNavigationMode) {
+      return;
+    }
+    this.isNavigationMode = false;
+    if (this.watchId !== null) {
+      this.stopTracking();
+      await this.startTracking();
+    }
+  }
+
+  /**
+   * Subscribe to location updates
+   */
+  public subscribeToLocationUpdates(callback: LocationUpdateCallback): () => void {
+    this.locationCallbacks.add(callback);
+    return () => this.locationCallbacks.delete(callback);
+  }
+
+  /**
+   * Notify all subscribers of location update
+   */
+  private notifySubscribers(location: LocationData): void {
+    this.locationCallbacks.forEach(callback => {
+      try {
+        callback(location);
+      } catch (error) {
+        console.error('Error in location callback:', error);
+      }
+    });
   }
 
   public stopTracking(): void {

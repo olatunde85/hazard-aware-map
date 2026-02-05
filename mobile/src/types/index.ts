@@ -100,3 +100,42 @@ export interface Location {
   latitude: number;
   longitude: number;
 }
+
+// Real-time navigation types
+export interface SnappedPosition {
+  latitude: number;
+  longitude: number;
+  segmentIndex: number;
+  parameterT: number; // Position along segment (0-1)
+  distanceFromRoute: number;
+  distanceAlongRoute: number;
+  distanceRemaining: number;
+  progressPercent: number;
+}
+
+export interface NavigationState {
+  rawPosition: Location;
+  snappedPosition: SnappedPosition;
+  heading: number | null;
+  smoothedHeading: number | null;
+  speed: number | null;
+  accuracy: number;
+  isOnRoute: boolean;
+  isDeviated: boolean;
+  timestamp: number;
+}
+
+export interface DeviationState {
+  isDeviated: boolean;
+  deviationStartTime: number | null;
+  currentDistanceFromRoute: number;
+  consecutiveDeviatedReadings: number;
+}
+
+export interface RerouteState {
+  lastRerouteTime: number;
+  rerouteAttempts: number;
+  isRerouting: boolean;
+}
+
+export type NavigationUpdateCallback = (state: NavigationState) => void;
