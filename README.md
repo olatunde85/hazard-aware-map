@@ -6,14 +6,28 @@ A crowd-sourced road hazard detection and alerting system that uses mobile senso
 
 <table>
   <tr>
+    <td><img src="screenshots/route-overview.jpeg" alt="Route Overview" width="250"/></td>
+    <td><img src="screenshots/active-navigation.jpeg" alt="Active Navigation" width="250"/></td>
+    <td><img src="screenshots/hazard-summary.jpeg" alt="Hazard Summary" width="250"/></td>
+    <td><img src="screenshots/trip-completed.jpeg" alt="Trip Completed" width="250"/></td>
+  </tr>
+  <tr>
+    <td align="center">Route Overview</td>
+    <td align="center">Active Navigation</td>
+    <td align="center">Hazard Summary</td>
+    <td align="center">Trip Completed</td>
+  </tr>
+</table>
+
+<table>
+  <tr>
     <td><img src="screenshots/demo-app.jpeg" alt="Monitor Screen" width="250"/></td>
-    <td><img src="screenshots/demo-app8.jpeg" alt="Verbose Monitor Screen" width="250"/></td>
-    <td><img src="screenshots/demo-app5.jpeg" alt="Map Screen" width="250"/></td>
+    <td><img src="screenshots/demo-app8.jpeg" alt="Verbose Sensor Monitor" width="250"/></td>
     <td><img src="screenshots/demo-app7.jpeg" alt="Settings Screen" width="250"/></td>
   </tr>
   <tr>
     <td align="center">Monitor Screen</td>
-    <td align="center">Map View</td>
+    <td align="center">Verbose Sensor Monitor</td>
     <td align="center">Settings</td>
   </tr>
 </table>
