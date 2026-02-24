@@ -67,3 +67,8 @@ mobile/src/services/MapsConfigService.ts
 # Research documents
 RESEARCH_NOTES.md
 RESEARCH_PAPER.md
+TECHNICAL_PAPER.md
+TECHNICAL_PAPER.docx
+
+# Build utilities
+no-bookmarks.lua
